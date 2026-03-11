@@ -153,7 +153,7 @@
     try {
       const fh = await dirHandle.getFileHandle('index.html');
       const writable = await fh.createWritable();
-      await writable.write(serialize());
+      await writable.write(serialize({ local: true }));
       await writable.close();
     } catch (e) {
       // Lost access (e.g. folder moved) — drop handle and fall back
@@ -254,6 +254,14 @@
 
     const btnStyle = 'padding:4px 12px;border-radius:4px;cursor:pointer;font-size:11px;font-family:inherit;';
 
+    // Derive the folder path from the file:// URL for display as a hint
+    const hintPath = location.protocol === 'file:'
+      ? decodeURIComponent(location.pathname.substring(0, location.pathname.lastIndexOf('/')))
+      : null;
+    const hintHtml = hintPath
+      ? `<span style="font-family:monospace;font-size:11px;opacity:0.75;margin-left:4px;">(${hintPath})</span>`
+      : '';
+
     if (!FS_SUPPORTED) {
       banner.innerHTML = `
         <span>⚠️ Your browser doesn't support saving directly to files. Use <strong>Chrome</strong> or <strong>Edge</strong> for the best experience. Your changes are saved in the browser for now.</span>
@@ -261,17 +269,18 @@
       `;
     } else {
       banner.innerHTML = `
-        <span style="flex:1">💾 <strong>Link your site folder</strong> so edits save directly to your files — nothing gets lost on reload.</span>
+        <span style="flex:1">💾 <strong>Link your site folder</strong> so edits save directly to your files — nothing gets lost on reload. ${hintHtml}</span>
         <button id="__webby-banner-grant" style="${btnStyle}background:#3b82f6;border:none;color:#fff;font-weight:600;">Select Folder</button>
         <button id="__webby-banner-dismiss" style="${btnStyle}background:transparent;border:1px solid rgba(255,255,255,0.25);color:#cbd5e1;">Not now</button>
       `;
       banner.querySelector('#__webby-banner-grant').addEventListener('click', async () => {
         try {
-          const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+          // startIn: 'documents' is the best hint the API allows — we can't pass an
+          // exact path, so we show the path in the banner text instead.
+          const handle = await window.showDirectoryPicker({ mode: 'readwrite', startIn: 'documents' });
           dirHandle = handle;
           await storeHandleInDB(handle);
           removeBanner();
-          // Immediately write current state to the newly linked folder
           await writeIndexToLocalFile();
           showStatus('Folder linked ✓ — edits now save to your files automatically');
         } catch (e) {
@@ -299,7 +308,7 @@
   // ── localStorage fallback path ───────────────────────────────────────────
 
   function writeDraftToCache() {
-    try { localStorage.setItem(DRAFT_KEY, serialize()); } catch (_) {}
+    try { localStorage.setItem(DRAFT_KEY, serialize({ local: true })); } catch (_) {}
   }
 
   function clearDraftCache() {
@@ -773,7 +782,11 @@ RULES:
 
   // ─── Serializer / Exporter ────────────────────────────────────────────────
 
-  function serialize() {
+  // serialize({ local: false }) — for publish/export: strips secrets.js + webby.js so
+  //   the deployed site has no editor code or credentials.
+  // serialize({ local: true })  — for local file save: keeps those script tags so edit
+  //   mode still activates next time the file is opened.
+  function serialize({ local = false } = {}) {
     const clone = document.documentElement.cloneNode(true);
 
     // Remove all editor UI (toolbar, modals, buttons, hints)
@@ -789,11 +802,13 @@ RULES:
       img.removeAttribute('data-webby-src');
     });
 
-    // Remove secrets.js and webby.js script tags
-    clone.querySelectorAll('script').forEach(s => {
-      const src = s.getAttribute('src') || '';
-      if (src.includes('secrets.js') || src.includes('webby.js')) s.remove();
-    });
+    // For publish/export only: strip secrets.js and webby.js so they never go live
+    if (!local) {
+      clone.querySelectorAll('script').forEach(s => {
+        const src = s.getAttribute('src') || '';
+        if (src.includes('secrets.js') || src.includes('webby.js')) s.remove();
+      });
+    }
 
     // Restore original body padding
     const body = clone.querySelector('body');
