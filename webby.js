@@ -881,12 +881,181 @@ RULES:
     Object.assign(node.style, styles);
   }
 
+  // ─── Link Editor ──────────────────────────────────────────────────────────
+
+  let activeLinkPopover = null;
+
+  function bindLinkHandlers() {
+    // Capture phase so we intercept before the browser follows the href
+    document.addEventListener('click', handleLinkClick, true);
+  }
+
+  function handleLinkClick(e) {
+    // Let editor UI links (toolbar buttons etc.) work normally
+    if (e.target.closest('[data-editor-ui]')) return;
+
+    const link = e.target.closest('a');
+    if (!link) {
+      // Click outside any link — close popover if open
+      if (activeLinkPopover && !activeLinkPopover.contains(e.target)) {
+        closeLinkPopover();
+      }
+      return;
+    }
+
+    // Only intercept links inside editable zones
+    if (!link.closest('[data-zone]')) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    openLinkPopover(link);
+  }
+
+  function openLinkPopover(link) {
+    closeLinkPopover();
+
+    const popover = el('div', { 'data-editor-ui': '', id: '__webby-link-popover' });
+    css(popover, {
+      position: 'fixed',
+      zIndex: '1000001',
+      background: '#fff',
+      border: '1px solid #e5e7eb',
+      borderRadius: '8px',
+      padding: '14px 16px',
+      width: '320px',
+      boxShadow: '0 8px 24px rgba(0,0,0,0.14)',
+      fontFamily: 'system-ui, sans-serif',
+      fontSize: '13px',
+    });
+
+    popover.innerHTML = `
+      <div style="font-weight:600;color:#111;margin-bottom:12px;font-size:12px;
+                  text-transform:uppercase;letter-spacing:0.05em;color:#9ca3af;">Edit Link</div>
+
+      <label style="display:block;margin-bottom:10px;">
+        <span style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:4px;">Display text</span>
+        <input id="__webby-link-text" type="text" value=""
+          style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:5px;
+                 font-size:13px;box-sizing:border-box;font-family:inherit;outline:none;" />
+      </label>
+
+      <label style="display:block;margin-bottom:10px;">
+        <span style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:4px;">URL</span>
+        <input id="__webby-link-url" type="text" value=""
+          style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:5px;
+                 font-size:13px;box-sizing:border-box;font-family:monospace;outline:none;" />
+      </label>
+
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:14px;">
+        <input id="__webby-link-blank" type="checkbox"
+          style="width:15px;height:15px;cursor:pointer;accent-color:#3b82f6;" />
+        <span style="font-size:12px;color:#374151;">Open in new tab</span>
+      </label>
+
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button id="__webby-link-remove"
+          style="padding:5px 11px;border:1px solid #fca5a5;background:#fff;color:#ef4444;
+                 border-radius:5px;cursor:pointer;font-size:12px;font-family:inherit;">
+          Remove link
+        </button>
+        <button id="__webby-link-done"
+          style="padding:5px 14px;background:#3b82f6;color:#fff;border:none;
+                 border-radius:5px;cursor:pointer;font-size:12px;font-weight:600;font-family:inherit;">
+          Done
+        </button>
+      </div>
+    `;
+
+    document.body.appendChild(popover);
+    activeLinkPopover = popover;
+
+    // Populate fields
+    const textInput = popover.querySelector('#__webby-link-text');
+    const urlInput = popover.querySelector('#__webby-link-url');
+    const blankCheck = popover.querySelector('#__webby-link-blank');
+
+    textInput.value = link.textContent;
+    urlInput.value = link.getAttribute('href') || '';
+    blankCheck.checked = link.getAttribute('target') === '_blank';
+
+    // Position below the link, within viewport
+    positionPopover(popover, link);
+
+    // Live updates
+    textInput.addEventListener('input', () => {
+      link.textContent = textInput.value;
+      setDirty(true);
+    });
+    urlInput.addEventListener('input', () => {
+      link.setAttribute('href', urlInput.value);
+      setDirty(true);
+    });
+    blankCheck.addEventListener('change', () => {
+      if (blankCheck.checked) {
+        link.setAttribute('target', '_blank');
+        link.setAttribute('rel', 'noopener noreferrer');
+      } else {
+        link.removeAttribute('target');
+        link.removeAttribute('rel');
+      }
+      setDirty(true);
+    });
+
+    popover.querySelector('#__webby-link-done').addEventListener('click', closeLinkPopover);
+
+    popover.querySelector('#__webby-link-remove').addEventListener('click', () => {
+      // Unwrap: replace <a> with its text content
+      const text = document.createTextNode(link.textContent);
+      link.replaceWith(text);
+      setDirty(true);
+      closeLinkPopover();
+    });
+
+    // Focus URL field if empty, otherwise text field
+    if (!urlInput.value) {
+      urlInput.focus();
+    } else {
+      textInput.focus();
+      textInput.select();
+    }
+  }
+
+  function closeLinkPopover() {
+    if (activeLinkPopover) {
+      activeLinkPopover.remove();
+      activeLinkPopover = null;
+    }
+  }
+
+  function positionPopover(popover, anchor) {
+    const rect = anchor.getBoundingClientRect();
+    const margin = 8;
+    const popH = 230; // approximate height before render
+    const popW = 320;
+
+    let top = rect.bottom + margin;
+    let left = rect.left;
+
+    // Flip above if not enough space below
+    if (top + popH > window.innerHeight - margin) {
+      top = rect.top - popH - margin;
+    }
+    // Clamp horizontally
+    if (left + popW > window.innerWidth - margin) {
+      left = window.innerWidth - popW - margin;
+    }
+    if (left < margin) left = margin;
+
+    css(popover, { top: top + 'px', left: left + 'px' });
+  }
+
   // ─── Init ─────────────────────────────────────────────────────────────────
 
   function init() {
     injectToolbar();
     activateZones();
     bindMutationObserver();
+    bindLinkHandlers();
     showStatus('Edit mode active');
   }
 

@@ -23,9 +23,13 @@ The content "database" is the HTML file itself. The site owner edits text by cli
 
 Use the [Bootstrap Prompt](./BOOTSTRAP_PROMPT.md) with Claude.ai (attach 2–5 inspiration images and fill in the bracketed fields). The output is a complete `index.html` ready to use.
 
-### 2. Create a GitHub repository
+### 2. Create a GitHub repository and enable GitHub Pages
 
-Create a new repo (e.g. `jane/jane-osteopathy`) and enable GitHub Pages on the `main` branch.
+1. Create a new **public** repository on GitHub (e.g. `jane/jane-osteopathy`)
+2. Go to **Settings → Pages**
+3. Under *Source*, select **Deploy from a branch**
+4. Set branch to `main`, folder to `/ (root)`, and click **Save**
+5. Add the GitHub Actions deploy workflow below (`.github/workflows/deploy.yml`) — this is what runs automatically every time Webby publishes your site
 
 ### 3. Add `secrets.js` to your local site folder
 
@@ -38,7 +42,7 @@ window.SITE_SECRETS = {
 };
 ```
 
-> **Never commit this file.** Add `secrets.js` to your `.gitignore`.
+> **This file stays on your computer only.** Webby publishes your site by pushing `index.html` directly to GitHub via the API — your local folder is never a git repository, and `secrets.js` is never sent anywhere except directly to the GitHub and Anthropic APIs.
 
 ### 4. Open `index.html` in your browser
 
@@ -53,7 +57,9 @@ The editor activates automatically. You'll see a dark toolbar at the top of the 
 
 ### 6. Publish
 
-Click **Publish** in the toolbar. The editor commits `index.html` to your GitHub repo, which triggers the GitHub Actions workflow and deploys to GitHub Pages within ~60 seconds.
+Click **Publish** in the toolbar. Webby uses the GitHub API to push `index.html` directly to your repository — no git, no terminal, no syncing. GitHub Actions picks up the push and deploys to GitHub Pages within ~60 seconds.
+
+> **How it works under the hood:** Webby serialises the current page (stripping all editor UI and credentials), then calls the GitHub Contents API to write the file. Only `index.html` is updated; everything else in your repo (images, workflow files, etc.) is untouched unless you explicitly replaced an image during editing.
 
 ---
 
@@ -138,7 +144,7 @@ https://<your-username>.github.io/<this-repo>/webby-1.0.0.js
 
 Pinned versioned files (e.g. `webby-1.0.0.js`) are committed alongside `webby.js` on each release and are never modified after publishing.
 
-To enable GitHub Pages on this repo: **Settings → Pages → Source: Deploy from branch → main → / (root)**.
+> **One-time setup required:** Go to **Settings → Pages → Source → Deploy from a branch**, set branch to `main`, folder to `/ (root)`, and save. After that, `make release` keeps the live files up to date automatically — no further configuration needed.
 
 ---
 
@@ -179,7 +185,7 @@ See the [Makefile](./Makefile) for full details on what `make release` does.
 
 ## Security notes
 
-- `secrets.js` is **gitignored** and never committed — credentials stay local
+- `secrets.js` lives only on your computer and is never published — your local folder is not a git repository
 - The GitHub PAT should be a **fine-grained token** scoped to the single site repo with `contents: read + write` only
 - The Anthropic key is used client-side — acceptable for personal/single-owner use; for shared use, proxy through a serverless function
 - The exported and published HTML contains **no credentials** and **no editor code**
