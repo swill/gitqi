@@ -331,7 +331,14 @@
       const b64 = arrayBufferToBase64(buffer);
       const path = `assets/${file.name}`;
       await github.uploadFile(path, b64);
-      imgEl.src = `./${path}`;
+
+      // Show the image locally using a blob URL — the file only exists on GitHub,
+      // not in the local filesystem, so ./assets/... would 404 when opened via file://.
+      // The serializer swaps this back to the real relative path before publish/export.
+      const blobUrl = URL.createObjectURL(new Blob([buffer], { type: file.type }));
+      imgEl.src = blobUrl;
+      imgEl.dataset.webbySrc = `./${path}`;
+
       setDirty(true);
       showStatus('Image uploaded ✓');
     } catch (err) {
@@ -573,6 +580,12 @@ RULES:
     // Remove editor-injected attributes
     clone.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
     clone.querySelectorAll('[spellcheck]').forEach(el => el.removeAttribute('spellcheck'));
+
+    // Resolve locally-displayed blob URLs back to their published relative paths
+    clone.querySelectorAll('img[data-webby-src]').forEach(img => {
+      img.setAttribute('src', img.dataset.webbySrc);
+      img.removeAttribute('data-webby-src');
+    });
 
     // Remove secrets.js and webby.js script tags
     clone.querySelectorAll('script').forEach(s => {
