@@ -35,14 +35,16 @@ Use the [Bootstrap Prompt](./BOOTSTRAP_PROMPT.md) with Claude.ai (attach 2–5 i
 
 ```js
 window.SITE_SECRETS = {
-  anthropicKey: "sk-ant-...",    // Anthropic API key (for AI section generation)
-  githubToken:  "ghp_...",       // GitHub fine-grained PAT (contents: read + write)
-  repo:         "jane/jane-osteopathy",
-  branch:       "main"
+  geminiKey:   "AIza...",         // Google AI Studio API key (for AI section generation)
+  githubToken: "ghp_...",         // GitHub fine-grained PAT (contents: read + write)
+  repo:        "jane/jane-osteopathy",
+  branch:      "main"
 };
 ```
 
-> **This file stays on your computer only.** Webby publishes your site by pushing `index.html` directly to GitHub via the API — your local folder is never a git repository, and `secrets.js` is never sent anywhere except directly to the GitHub and Anthropic APIs.
+Get your free Gemini API key at [aistudio.google.com](https://aistudio.google.com) — no billing required.
+
+> **This file stays on your computer only.** Webby publishes your site by pushing `index.html` directly to GitHub via the API — your local folder is never a git repository, and `secrets.js` is never sent anywhere except directly to the GitHub and Google APIs.
 
 ### 4. Open `index.html` in your browser
 
@@ -187,5 +189,5 @@ See the [Makefile](./Makefile) for full details on what `make release` does.
 
 - `secrets.js` lives only on your computer and is never published — your local folder is not a git repository
 - The GitHub PAT should be a **fine-grained token** scoped to the single site repo with `contents: read + write` only
-- The Anthropic key is used client-side — acceptable for personal/single-owner use; for shared use, proxy through a serverless function
+- The Gemini API key is used client-side — acceptable for personal/single-owner use; for shared use, proxy through a serverless function
 - The exported and published HTML contains **no credentials** and **no editor code**

@@ -11,7 +11,7 @@
 
   if (!window.SITE_SECRETS) return;
 
-  const { anthropicKey, githubToken, repo, branch = 'main' } = window.SITE_SECRETS;
+  const { geminiKey, githubToken, repo, branch = 'main' } = window.SITE_SECRETS;
 
   // ─── State ────────────────────────────────────────────────────────────────
 
@@ -458,7 +458,7 @@
 
   async function generateSection(description, insertAfterZone) {
     const prompt = buildSectionPrompt(description);
-    const responseText = await callAnthropicAPI(prompt);
+    const responseText = await callGeminiAPI(prompt);
     const html = parseHTMLFromResponse(responseText);
     injectNewSection(html, insertAfterZone);
   }
@@ -502,30 +502,26 @@ RULES:
 - Return ONLY the raw <section> element — no explanation, no markdown fences, nothing else`;
   }
 
-  async function callAnthropicAPI(prompt) {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': anthropicKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'claude-opus-4-6',
-        max_tokens: 2048,
-        messages: [{ role: 'user', content: prompt }],
-      }),
-    });
+  async function callGeminiAPI(prompt) {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+        }),
+      }
+    );
 
     if (!res.ok) {
-      let errMsg = `API error ${res.status}`;
+      let errMsg = `Gemini API error ${res.status}`;
       try { errMsg = (await res.json()).error?.message || errMsg; } catch (_) {}
       throw new Error(errMsg);
     }
 
     const data = await res.json();
-    return data.content[0].text;
+    return data.candidates[0].content.parts[0].text;
   }
 
   function parseHTMLFromResponse(text) {

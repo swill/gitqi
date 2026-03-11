@@ -113,25 +113,20 @@ Once you have `index.html`:
 2. **Add `secrets.js`** to the same folder:
    ```js
    window.SITE_SECRETS = {
-     anthropicKey: "sk-ant-...",
-     githubToken:  "ghp_...",
-     repo:         "username/repo-name",
-     branch:       "main"
+     geminiKey:   "AIza...",       // Free at aistudio.google.com
+     githubToken: "ghp_...",
+     repo:        "username/repo-name",
+     branch:      "main"
    };
    ```
 
-3. **Add to `.gitignore`:**
-   ```
-   secrets.js
-   ```
+3. **Open `index.html` in your browser** — edit mode should activate automatically.
 
-4. **Open `index.html` in your browser** — edit mode should activate automatically.
+4. Replace placeholder text by clicking and typing directly on the page.
 
-5. Replace placeholder text by clicking and typing directly on the page.
+5. Replace placeholder images by clicking on any image.
 
-6. Replace placeholder images by clicking on any image.
-
-7. Click **Publish** when ready.
+6. Click **Publish** when ready.
 
 ---
 
