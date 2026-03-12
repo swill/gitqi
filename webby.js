@@ -1150,8 +1150,27 @@ RULES:
   async function generateSection(description, insertAfterZone) {
     const prompt = buildSectionPrompt(description);
     const responseText = await callGeminiAPI(prompt);
-    const html = parseHTMLFromResponse(responseText);
-    injectNewSection(html, insertAfterZone);
+    const { css, html } = parseSectionResponse(responseText);
+
+    if (!html) throw new Error('AI returned no valid HTML element.');
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    const section = tmp.querySelector('section');
+    if (!section) throw new Error('AI returned no valid HTML element.');
+
+    const slug = section.dataset.zone || ('section-' + Date.now());
+    if (css) {
+      const styleId = '__webby-section-' + slug + '-styles';
+      let sectionStyleEl = document.getElementById(styleId);
+      if (!sectionStyleEl) {
+        sectionStyleEl = document.createElement('style');
+        sectionStyleEl.id = styleId;
+        document.head.appendChild(sectionStyleEl);
+      }
+      sectionStyleEl.textContent = css;
+    }
+
+    injectNewSection(section, insertAfterZone);
   }
 
   function buildSectionPrompt(description) {
@@ -1162,35 +1181,40 @@ RULES:
     let exampleHTML = '';
     if (exampleZone) {
       const clone = exampleZone.cloneNode(true);
-      // Strip editor-injected attributes from example
       clone.querySelectorAll('[data-editor-ui]').forEach(el => el.remove());
       clone.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
       clone.querySelectorAll('[spellcheck]').forEach(el => el.removeAttribute('spellcheck'));
       exampleHTML = clone.outerHTML;
     }
 
-    return `You are generating a new HTML section for a website.
+    return `You are generating a new HTML section for a website — both its HTML and any CSS it needs.
 
-STYLE CONTEXT (CSS variables and base styles in use):
-<style>
+CSS VARIABLES IN USE (use these, never hardcode colours or sizes):
 ${styleBlock}
-</style>
 
-EXISTING SECTION EXAMPLE (match this markup style and class patterns exactly):
+EXISTING SECTION EXAMPLE (match this markup style and class patterns):
 ${exampleHTML}
 
 TASK:
-Generate a single <section> element for the following description:
+Generate a new section for the following description:
 "${description}"
 
 RULES:
-- Use only the CSS variables already defined above — no hardcoded colors or sizes
-- Match the class naming conventions shown in the example
+- Use only the CSS variables defined above — no hardcoded colors or font sizes
 - Include data-zone="{slug}" and data-zone-label="{Human Label}" on the <section>
 - Add data-editable on every user-editable text element (headings, paragraphs, spans, list items)
 - Add data-editable-image on any <img> elements; use src="./assets/placeholder.jpg"
 - Use semantic, accessible HTML
-- Return ONLY the raw <section> element — no explanation, no markdown fences, nothing else`;
+- If the section needs layout, responsive columns, or media queries, put that CSS in the section-css block
+- Return your response in EXACTLY this format with no other text:
+
+<section-css>
+/* CSS for this section including any media queries — omit block entirely if no CSS needed */
+</section-css>
+
+<section-html>
+<section>...</section>
+</section-html>`;
   }
 
   async function callGeminiAPI(prompt) {
@@ -1223,11 +1247,7 @@ RULES:
       .trim();
   }
 
-  function injectNewSection(html, insertAfterZone) {
-    const tmp = document.createElement('div');
-    tmp.innerHTML = html;
-    const section = tmp.firstElementChild;
-    if (!section) throw new Error('AI returned no valid HTML element.');
+  function injectNewSection(section, insertAfterZone) {
 
     if (insertAfterZone) {
       // Insert after the zone's trailing add-button if it exists
