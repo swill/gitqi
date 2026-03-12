@@ -75,7 +75,7 @@
 
     // Push body content down so toolbar doesn't overlap
     originalBodyPaddingTop = document.body.style.paddingTop || '';
-    const current = parseFloat(document.body.style.paddingTop) || 0;
+    const current = parseFloat(getComputedStyle(document.body).paddingTop) || 0;
     document.body.style.paddingTop = (current + 44) + 'px';
   }
 
