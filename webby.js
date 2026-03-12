@@ -558,9 +558,9 @@
     submitBtn.addEventListener('mouseenter', () => { submitBtn.style.background = '#2563eb'; });
     submitBtn.addEventListener('mouseleave', () => { submitBtn.style.background = '#3b82f6'; });
 
-    const close = () => overlay.remove();
+    let sectionPending = false;
+    const close = () => { if (!sectionPending) overlay.remove(); };
     cancelBtn.addEventListener('click', close);
-    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
     textarea.addEventListener('keydown', e => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') submitBtn.click();
     });
@@ -573,17 +573,21 @@
       submitBtn.disabled = true;
       submitBtn.textContent = 'Reformatting…';
       cancelBtn.disabled = true;
+      textarea.disabled = true;
+      sectionPending = true;
 
       try {
         await reformatSection(section, description);
         overlay.remove();
         showStatus('Section reformatted ✓');
       } catch (err) {
+        sectionPending = false;
         errorEl.textContent = 'Error: ' + err.message;
         errorEl.style.display = 'block';
         submitBtn.disabled = false;
         submitBtn.textContent = 'Try Again';
         cancelBtn.disabled = false;
+        textarea.disabled = false;
       }
     });
   }
@@ -773,8 +777,8 @@ RULES:
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') submitBtn.click();
     });
 
-    cancelBtn.addEventListener('click', () => overlay.remove());
-    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    let navPending = false;
+    cancelBtn.addEventListener('click', () => { if (!navPending) overlay.remove(); });
 
     submitBtn.addEventListener('click', async () => {
       const description = textarea.value.trim();
@@ -782,15 +786,21 @@ RULES:
       errorEl.style.display = 'none';
       submitBtn.disabled = true;
       submitBtn.textContent = 'Reformatting…';
+      cancelBtn.disabled = true;
+      textarea.disabled = true;
+      navPending = true;
       try {
-        overlay.remove();
         await reformatNav(nav, description);
+        overlay.remove();
         showStatus('Nav reformatted ✓');
       } catch (err) {
+        navPending = false;
         errorEl.textContent = 'Error: ' + err.message;
         errorEl.style.display = 'block';
         submitBtn.disabled = false;
         submitBtn.textContent = 'Reformat with AI';
+        cancelBtn.disabled = false;
+        textarea.disabled = false;
       }
     });
   }
@@ -1115,7 +1125,6 @@ RULES:
 
     const close = () => overlay.remove();
     cancelBtn.addEventListener('click', close);
-    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 
     textarea.addEventListener('keydown', e => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') submitBtn.click();
