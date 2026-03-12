@@ -85,6 +85,14 @@ Generate a single index.html file with the following:
    - data-editable-image on every <img> element
 6. A single <nav> with smooth-scroll links to each section
 7. Responsive mobile navigation (hamburger toggle using only CSS or minimal inline JS)
+   Mobile nav requirements — these are mandatory, not optional:
+   - The expanded mobile menu must be fully visible on screen and never clipped
+   - Use position: fixed or position: absolute (not static/relative) for the expanded menu so it
+     escapes any parent overflow constraints
+   - Set a z-index high enough (e.g. 9000) that the menu appears above all page content
+   - Never rely on a parent container with overflow: hidden to contain the menu
+   - The menu must be scrollable (overflow-y: auto) if it could exceed viewport height
+   - Test the toggle logic: the menu must open AND close correctly on repeated hamburger clicks
 8. No JavaScript frameworks — vanilla JS only, and only where necessary
 9. Include this script tag in the <head>, immediately after the <style> block:
    <script src="./secrets.js"></script>
