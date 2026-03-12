@@ -428,6 +428,12 @@
       // Clean up adjacent add-button
       const next = section.nextElementSibling;
       if (next && next.classList.contains('__webby-add-wrap')) next.remove();
+      // Clean up any section-specific style block
+      const slug = section.dataset.zone;
+      if (slug) {
+        const sectionStyle = document.getElementById('__webby-section-' + slug + '-styles');
+        if (sectionStyle) sectionStyle.remove();
+      }
       section.remove();
       setDirty(true);
       refreshAddButtons();
