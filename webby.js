@@ -415,7 +415,7 @@
 
     // Tooltip
     const tip = el('span', { 'data-editor-ui': '' });
-    tip.textContent = 'Copied!';
+    tip.textContent = 'Link Copied!';
     css(tip, {
       position: 'absolute',
       top: '50%',
