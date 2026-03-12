@@ -19,6 +19,7 @@
   let mutationObserver = null;
   let statusTimer = null;
   let originalBodyPaddingTop = '';
+  let originalNavTop = null; // set when a fixed nav is shifted down for the toolbar
   let autoSaveTimer = null;
   let dirHandle = null; // FileSystemDirectoryHandle when folder access is granted
 
@@ -77,6 +78,14 @@
     originalBodyPaddingTop = document.body.style.paddingTop || '';
     const current = parseFloat(getComputedStyle(document.body).paddingTop) || 0;
     document.body.style.paddingTop = (current + 44) + 'px';
+
+    // If the page has a fixed nav, shift it down so the toolbar doesn't overlap it
+    const nav = document.querySelector('nav');
+    if (nav && getComputedStyle(nav).position === 'fixed') {
+      originalNavTop = nav.style.top || '';
+      const navTop = parseFloat(getComputedStyle(nav).top) || 0;
+      nav.style.top = (navTop + 44) + 'px';
+    }
   }
 
   function toolbarBtn(label, primary = false) {
@@ -1202,6 +1211,18 @@ RULES:
         body.style.paddingTop = originalBodyPaddingTop;
       } else {
         body.style.removeProperty('padding-top');
+      }
+    }
+
+    // Restore fixed nav top if it was shifted for the toolbar
+    if (originalNavTop !== null) {
+      const navClone = clone.querySelector('nav');
+      if (navClone) {
+        if (originalNavTop) {
+          navClone.style.top = originalNavTop;
+        } else {
+          navClone.style.removeProperty('top');
+        }
       }
     }
 
