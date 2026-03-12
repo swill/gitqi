@@ -610,6 +610,176 @@ RULES:
 - Return ONLY the reformatted <section> element — no explanation, no markdown fences, nothing else`;
   }
 
+  // ─── Nav Editor ───────────────────────────────────────────────────────────
+
+  function activateNav() {
+    const nav = document.querySelector('nav');
+    if (!nav) return;
+    if (nav.dataset.webbyNavBound) return;
+    nav.dataset.webbyNavBound = '1';
+
+    const btn = el('button', { 'data-editor-ui': '' });
+    btn.textContent = '⟳ Reformat Nav';
+    css(btn, {
+      position: 'absolute',
+      top: '4px',
+      right: '4px',
+      zIndex: '1000',
+      padding: '4px 9px',
+      background: 'rgba(59,130,246,0.88)',
+      color: '#fff',
+      border: 'none',
+      borderRadius: '4px',
+      cursor: 'pointer',
+      fontSize: '11px',
+      opacity: '0',
+      transition: 'opacity 0.15s',
+      pointerEvents: 'none',
+    });
+
+    nav.addEventListener('mouseenter', () => {
+      btn.style.opacity = '1';
+      btn.style.pointerEvents = 'auto';
+    });
+    nav.addEventListener('mouseleave', () => {
+      btn.style.opacity = '0';
+      btn.style.pointerEvents = 'none';
+    });
+
+    btn.addEventListener('mouseenter', () => {
+      nav.style.outline = '2px solid rgba(59,130,246,0.6)';
+      nav.style.outlineOffset = '-2px';
+    });
+    btn.addEventListener('mouseleave', () => {
+      nav.style.outline = '';
+      nav.style.outlineOffset = '';
+    });
+
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      promptReformatNav(nav);
+    });
+
+    if (getComputedStyle(nav).position === 'static') {
+      nav.style.position = 'relative';
+    }
+    nav.appendChild(btn);
+  }
+
+  function promptReformatNav(nav) {
+    const overlay = el('div', { 'data-editor-ui': '' });
+    css(overlay, {
+      position: 'fixed',
+      inset: '0',
+      background: 'rgba(0,0,0,0.55)',
+      zIndex: '1000000',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+    });
+
+    overlay.innerHTML = `
+      <div style="background:#fff;border-radius:10px;padding:28px 24px;width:480px;max-width:94vw;box-shadow:0 16px 48px rgba(0,0,0,0.22);font-family:system-ui,sans-serif;">
+        <h3 style="margin:0 0 6px;font-size:16px;color:#111;font-weight:700">Reformat: Navigation</h3>
+        <p style="margin:0 0 14px;font-size:13px;color:#555;">Describe how to restructure the navigation. Links and labels are preserved unless you ask to change them.</p>
+        <textarea
+          id="__webby-reformat-nav-desc"
+          placeholder="e.g. Make it a sticky horizontal bar with the logo on the left and links on the right, with a hamburger menu on mobile"
+          style="width:100%;box-sizing:border-box;height:90px;padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;font-family:inherit;resize:vertical;outline:none;"
+        ></textarea>
+        <p id="__webby-reformat-nav-error" style="display:none;margin:8px 0 0;font-size:12px;color:#ef4444;"></p>
+        <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
+          <button id="__webby-reformat-nav-cancel"
+            style="padding:7px 16px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer;font-size:13px;font-family:inherit;">
+            Cancel
+          </button>
+          <button id="__webby-reformat-nav-submit"
+            style="padding:7px 16px;border:none;border-radius:6px;background:#3b82f6;color:#fff;cursor:pointer;font-size:13px;font-family:inherit;font-weight:600;">
+            Reformat with AI
+          </button>
+        </div>
+      </div>`;
+
+    document.body.appendChild(overlay);
+
+    const textarea = overlay.querySelector('#__webby-reformat-nav-desc');
+    const errorEl  = overlay.querySelector('#__webby-reformat-nav-error');
+    const submitBtn = overlay.querySelector('#__webby-reformat-nav-submit');
+    const cancelBtn = overlay.querySelector('#__webby-reformat-nav-cancel');
+
+    setTimeout(() => textarea.focus(), 50);
+
+    textarea.addEventListener('keydown', e => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') submitBtn.click();
+    });
+
+    cancelBtn.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+    submitBtn.addEventListener('click', async () => {
+      const description = textarea.value.trim();
+      if (!description) { textarea.focus(); return; }
+      errorEl.style.display = 'none';
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Reformatting…';
+      try {
+        overlay.remove();
+        await reformatNav(nav, description);
+        showStatus('Nav reformatted ✓');
+      } catch (err) {
+        errorEl.textContent = 'Error: ' + err.message;
+        errorEl.style.display = 'block';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Reformat with AI';
+      }
+    });
+  }
+
+  async function reformatNav(nav, description) {
+    const prompt = buildReformatNavPrompt(nav, description);
+    const responseText = await callGeminiAPI(prompt);
+    const html = parseHTMLFromResponse(responseText);
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    const newNav = tmp.firstElementChild;
+    if (!newNav || newNav.tagName.toLowerCase() !== 'nav') {
+      throw new Error('AI did not return a valid <nav> element.');
+    }
+    // Clear the bound marker so activateNav can rebind the new element
+    delete newNav.dataset.webbyNavBound;
+    nav.replaceWith(newNav);
+    activateNav();
+    setDirty(true);
+  }
+
+  function buildReformatNavPrompt(nav, description) {
+    const styleEl = document.querySelector('style');
+    const styleBlock = styleEl ? styleEl.textContent : '';
+
+    const clone = nav.cloneNode(true);
+    clone.querySelectorAll('[data-editor-ui]').forEach(el => el.remove());
+    clone.removeAttribute('data-webby-nav-bound');
+
+    return `You are reformatting the navigation element of a website.
+
+STYLE CONTEXT (CSS variables and base styles in use):
+<style>
+${styleBlock}
+</style>
+
+EXISTING NAV HTML (reformat this):
+${clone.outerHTML}
+
+REFORMAT INSTRUCTION:
+"${description}"
+
+RULES:
+- Preserve ALL existing link text and hrefs exactly as-is unless the instruction explicitly says to change them
+- Only change HTML structure, CSS classes, layout, and responsive behaviour
+- Use only the CSS variables already defined in the style context — no hardcoded colours or sizes
+- Return ONLY the reformatted <nav> element — no explanation, no markdown fences, nothing else`;
+  }
+
   function injectAddSectionButtons() {
     const zones = Array.from(document.querySelectorAll('[data-zone]'));
     if (!zones.length) return;
@@ -1010,10 +1180,12 @@ RULES:
       img.removeAttribute('data-webby-src');
     });
 
-    // Remove internal binding marker added by activateZone
+    // Remove internal binding markers
     clone.querySelectorAll('img[data-webby-bound]').forEach(img => {
       img.removeAttribute('data-webby-bound');
     });
+    const navClone = clone.querySelector('nav[data-webby-nav-bound]');
+    if (navClone) navClone.removeAttribute('data-webby-nav-bound');
 
     // For publish/export only: strip secrets.js and webby.js so they never go live
     if (!local) {
@@ -1348,8 +1520,8 @@ RULES:
       return;
     }
 
-    // Only intercept links inside editable zones
-    if (!link.closest('[data-zone]')) return;
+    // Only intercept links inside editable zones or the nav
+    if (!link.closest('[data-zone]') && !link.closest('nav')) return;
 
     e.preventDefault();
     e.stopPropagation();
@@ -1506,6 +1678,7 @@ RULES:
 
     injectToolbar();
     activateZones();
+    activateNav();
     bindMutationObserver();
     bindLinkHandlers();
     showStatus('Edit mode active');

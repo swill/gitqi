@@ -65,8 +65,9 @@ Once linked, every edit auto-saves to your local `index.html` within 1.5 seconds
 ### 6. Edit your content
 
 - **Text** — click any text and type directly on the page
-- **Links** — click any link to edit its display text, URL, or open-in-new-tab setting
+- **Links** — click any link (including nav links) to edit its display text, URL, or open-in-new-tab setting
 - **Images** — click any image to replace it; the new image saves to your local `assets/` folder and uploads to GitHub automatically
+- **Navigation** — hover the nav bar and click **⟳ Reformat Nav** to restructure it with AI
 - **New sections** — hover between sections and click **+ Add Section**; describe what you want and the AI generates it
 - **Reformat sections** — if you want to change the format with AI, while keeping the content you have developed
 - **Delete sections** — that are no longer relevant
@@ -76,7 +77,43 @@ Once linked, every edit auto-saves to your local `index.html` within 1.5 seconds
 
 Click **Publish** in the toolbar. Webby uses the GitHub API to push `index.html` directly to your repository — no git, no terminal, no syncing. GitHub Pages serves the updated file within ~60 seconds.
 
-> **How it works under the hood:** Webby serialises the current page (stripping all editor UI and credentials), then calls the GitHub Contents API to write the file. Images you replaced during editing are also committed to `assets/` in your repo.
+> **How it works under the hood:** Webby serializes the current page (stripping all editor UI and credentials), then calls the GitHub Contents API to write the file. Images you replaced during editing are also committed to `assets/` in your repo.
+
+---
+
+## Custom domain (optional)
+
+By default your site is served at `https://username.github.io/repo-name`. To use your own domain (e.g. `www.janeosteopathy.com`), follow the steps below.
+
+### Option A — Subdomain (www or any prefix) — CNAME record
+
+Use this if your domain will be `www.example.com` or `blog.example.com`.
+
+1. In your DNS provider, add a **CNAME** record:
+   | Name | Type | Value |
+   |---|---|---|
+   | `www` | CNAME | `username.github.io` |
+2. In your GitHub repo, go to **Settings → Pages → Custom domain**, enter `www.example.com`, and click **Save**. GitHub will create a `CNAME` file in your repo root automatically.
+3. Check **Enforce HTTPS** once the certificate is provisioned (usually a few minutes).
+
+> **Important:** Webby publishes by overwriting `index.html` only — it does not touch the `CNAME` file. Your custom domain stays configured across all publishes.
+
+### Option B — Apex domain (no www) — A records
+
+Use this if your domain will be `example.com` (no subdomain).
+
+1. In your DNS provider, add four **A** records pointing to GitHub's IP addresses:
+   | Name | Type | Value |
+   |---|---|---|
+   | `@` | A | `185.199.108.153` |
+   | `@` | A | `185.199.109.153` |
+   | `@` | A | `185.199.110.153` |
+   | `@` | A | `185.199.111.153` |
+2. Optionally add a CNAME for `www` → `username.github.io` so both work.
+3. In your GitHub repo, go to **Settings → Pages → Custom domain**, enter `example.com`, and click **Save**.
+4. Check **Enforce HTTPS** once the certificate is provisioned.
+
+> DNS changes can take up to 48 hours to propagate, though they are often much faster. GitHub will warn you if the domain isn't verified yet — just wait a few minutes and refresh.
 
 ---
 
