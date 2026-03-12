@@ -1785,53 +1785,165 @@ RULES:
       section.appendChild(groupTitle);
 
       for (const [varName, varValue] of Object.entries(groupVars)) {
-        const row = el('div');
-        css(row, { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '7px' });
-
-        const label = el('label');
-        label.textContent = varName.replace(/^--/, '');
-        label.title = varName;
-        css(label, {
-          flex: '1',
-          color: '#374151',
-          fontSize: '11px',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        });
-
-        const trimmed = varValue.trim();
-        const isColor = /^#[0-9a-f]{3,8}$/i.test(trimmed) ||
-          /^rgba?\(/.test(trimmed) ||
-          /^hsla?\(/.test(trimmed);
-
-        let input;
-        if (isColor) {
-          input = el('input');
-          input.type = 'color';
-          input.value = toHex(trimmed);
-          css(input, { width: '36px', height: '26px', padding: '1px', border: '1px solid #d1d5db', borderRadius: '4px', cursor: 'pointer' });
-        } else {
-          input = el('input');
-          input.type = 'text';
-          input.value = trimmed;
-          css(input, { width: '110px', padding: '3px 7px', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '11px', fontFamily: 'monospace' });
-        }
-
-        input.addEventListener('input', () => {
-          document.documentElement.style.setProperty(varName, input.value);
-          updateStyleVar(styleEl, varName, input.value);
-          setDirty(true);
-        });
-
-        row.append(label, input);
-        section.appendChild(row);
+        section.appendChild(makeVarRow(varName, varValue, styleEl));
       }
+
+      // "Add font variable" button — only on the Typography group
+      if (groupName === 'Typography') {
+        const addFontBtn = el('button');
+        addFontBtn.textContent = '＋ Add font variable';
+        css(addFontBtn, {
+          marginTop: '6px',
+          padding: '3px 8px',
+          background: 'none',
+          border: '1px dashed #d1d5db',
+          borderRadius: '4px',
+          fontSize: '11px',
+          color: '#6b7280',
+          cursor: 'pointer',
+          width: '100%',
+          textAlign: 'left',
+          fontFamily: 'inherit',
+        });
+
+        addFontBtn.addEventListener('click', () => {
+          addFontBtn.style.display = 'none';
+
+          const form = el('div');
+          css(form, { marginTop: '6px' });
+
+          // Row 1: prefix label + name input
+          const nameRow = el('div');
+          css(nameRow, { display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '5px' });
+
+          const prefix = el('span');
+          prefix.textContent = '--font-';
+          css(prefix, { fontSize: '11px', fontFamily: 'monospace', color: '#9ca3af', flexShrink: '0' });
+
+          const nameInput = el('input');
+          nameInput.type = 'text';
+          nameInput.placeholder = 'display';
+          css(nameInput, { flex: '1', minWidth: '0', padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '11px', fontFamily: 'monospace' });
+
+          nameRow.append(prefix, nameInput);
+
+          // Row 2: value input
+          const valueInput = el('input');
+          valueInput.type = 'text';
+          valueInput.placeholder = "'Playfair Display', serif";
+          css(valueInput, { width: '100%', boxSizing: 'border-box', padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '11px', fontFamily: 'monospace', marginBottom: '6px' });
+
+          // Row 3: action buttons
+          const btnRow = el('div');
+          css(btnRow, { display: 'flex', gap: '6px' });
+
+          const confirmBtn = el('button');
+          confirmBtn.textContent = 'Add';
+          css(confirmBtn, { padding: '3px 10px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '11px', cursor: 'pointer', fontFamily: 'inherit' });
+
+          const cancelBtn = el('button');
+          cancelBtn.textContent = 'Cancel';
+          css(cancelBtn, { padding: '3px 10px', background: 'none', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '11px', cursor: 'pointer', fontFamily: 'inherit' });
+
+          btnRow.append(confirmBtn, cancelBtn);
+          form.append(nameRow, valueInput, btnRow);
+          section.appendChild(form);
+          nameInput.focus();
+
+          cancelBtn.addEventListener('click', () => {
+            form.remove();
+            addFontBtn.style.display = '';
+          });
+
+          const doAdd = () => {
+            const nameSuffix = nameInput.value.trim().replace(/[^a-z0-9-]/gi, '-');
+            const value = valueInput.value.trim();
+            if (!nameSuffix || !value) { nameInput.focus(); return; }
+
+            const varName = '--font-' + nameSuffix;
+            // Guard against duplicates
+            if (document.documentElement.style.getPropertyValue(varName) ||
+                styleEl.textContent.includes(varName + ':')) {
+              nameInput.style.borderColor = '#ef4444';
+              nameInput.title = 'Variable already exists';
+              return;
+            }
+
+            addStyleVar(styleEl, varName, value);
+            document.documentElement.style.setProperty(varName, value);
+            setDirty(true);
+
+            form.remove();
+            addFontBtn.style.display = '';
+            // Insert the new row before the add button
+            section.insertBefore(makeVarRow(varName, value, styleEl), addFontBtn);
+          };
+
+          confirmBtn.addEventListener('click', doAdd);
+          valueInput.addEventListener('keydown', e => { if (e.key === 'Enter') doAdd(); });
+          nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') valueInput.focus(); });
+        });
+
+        section.appendChild(addFontBtn);
+      }
+
       content.appendChild(section);
     }
 
     panel.append(header, content);
     document.body.appendChild(panel);
+  }
+
+  function makeVarRow(varName, varValue, styleEl) {
+    const row = el('div');
+    css(row, { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '7px' });
+
+    const label = el('label');
+    label.textContent = varName.replace(/^--/, '');
+    label.title = varName;
+    css(label, {
+      flex: '1',
+      color: '#374151',
+      fontSize: '11px',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+    });
+
+    const trimmed = varValue.trim();
+    const isColor = /^#[0-9a-f]{3,8}$/i.test(trimmed) ||
+      /^rgba?\(/.test(trimmed) ||
+      /^hsla?\(/.test(trimmed);
+
+    let input;
+    if (isColor) {
+      input = el('input');
+      input.type = 'color';
+      input.value = toHex(trimmed);
+      css(input, { width: '36px', height: '26px', padding: '1px', border: '1px solid #d1d5db', borderRadius: '4px', cursor: 'pointer' });
+    } else {
+      input = el('input');
+      input.type = 'text';
+      input.value = trimmed;
+      css(input, { width: '110px', padding: '3px 7px', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '11px', fontFamily: 'monospace' });
+    }
+
+    input.addEventListener('input', () => {
+      document.documentElement.style.setProperty(varName, input.value);
+      updateStyleVar(styleEl, varName, input.value);
+      setDirty(true);
+    });
+
+    row.append(label, input);
+    return row;
+  }
+
+  function addStyleVar(styleEl, varName, value) {
+    // Append the new variable inside the :root {} block
+    styleEl.textContent = styleEl.textContent.replace(
+      /(:root\s*\{[^}]*)(\})/,
+      (_, body, close) => `${body}  ${varName}: ${value};\n${close}`
+    );
   }
 
   function parseCSSVars(css) {
