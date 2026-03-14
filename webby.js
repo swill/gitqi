@@ -397,7 +397,7 @@
     btn.textContent = '#';
     css(btn, {
       position: 'absolute',
-      top: '80px',
+      top: '70px',
       left: '10px',
       transform: 'translateY(-50%)',
       zIndex: '1000',
@@ -464,7 +464,7 @@
     btn.textContent = '✕ Delete Section';
     css(btn, {
       position: 'absolute',
-      top: '80px',
+      top: '60px',
       right: '10px',
       zIndex: '1000',
       padding: '4px 9px',
@@ -527,7 +527,7 @@
     btn.textContent = '⟳ Reformat';
     css(btn, {
       position: 'absolute',
-      top: '80px',
+      top: '60px',
       right: '130px',
       zIndex: '1000',
       padding: '4px 9px',
