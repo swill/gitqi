@@ -2149,6 +2149,145 @@ RULES:
 
   let activeLinkPopover = null;
 
+  // ─── Selection Toolbar (bold / italic / link) ─────────────────────────────
+
+  let selectionToolbar = null;
+
+  function bindSelectionToolbar() {
+    document.addEventListener('mouseup', onSelectionChange);
+    document.addEventListener('keyup', onSelectionChange);
+    document.addEventListener('mousedown', e => {
+      if (selectionToolbar && !selectionToolbar.contains(e.target)) {
+        hideSelectionToolbar();
+      }
+    });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') hideSelectionToolbar();
+    });
+  }
+
+  function onSelectionChange() {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.toString().trim()) {
+      hideSelectionToolbar();
+      return;
+    }
+    const node = sel.anchorNode;
+    const editable = node &&
+      (node.nodeType === Node.TEXT_NODE ? node.parentElement : node).closest('[data-editable]');
+    if (!editable) { hideSelectionToolbar(); return; }
+    showSelectionToolbar(sel);
+  }
+
+  function showSelectionToolbar(sel) {
+    hideSelectionToolbar();
+    const range = sel.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
+    if (!rect.width && !rect.height) return;
+
+    const bar = el('div', { id: '__webby-sel-toolbar', 'data-editor-ui': '' });
+    css(bar, {
+      position: 'fixed',
+      zIndex: '1000002',
+      background: '#1e293b',
+      borderRadius: '6px',
+      padding: '3px 5px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '2px',
+      boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
+    });
+
+    const boldActive   = document.queryCommandState('bold');
+    const italicActive = document.queryCommandState('italic');
+
+    const boldBtn = makeSelBtn('B', boldActive, () => {
+      document.execCommand('bold');
+      hideSelectionToolbar();
+    });
+    css(boldBtn, { fontWeight: '700', fontFamily: 'Georgia, serif' });
+
+    const italicBtn = makeSelBtn('I', italicActive, () => {
+      document.execCommand('italic');
+      hideSelectionToolbar();
+    });
+    css(italicBtn, { fontStyle: 'italic', fontFamily: 'Georgia, serif' });
+
+    const LINK_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`;
+    const linkBtn = makeSelBtn('', false, () => {
+      const node = sel.anchorNode;
+      const existingLink = node &&
+        (node.nodeType === Node.TEXT_NODE ? node.parentElement : node).closest('a');
+      if (existingLink) {
+        hideSelectionToolbar();
+        openLinkPopover(existingLink);
+        return;
+      }
+      // Wrap selection in a new <a> using a sentinel href, then open the popover
+      document.execCommand('createLink', false, '__webby_new__');
+      const newLink = document.querySelector('a[href="__webby_new__"]');
+      if (newLink) {
+        newLink.setAttribute('href', '');
+        hideSelectionToolbar();
+        openLinkPopover(newLink);
+      } else {
+        hideSelectionToolbar();
+      }
+    });
+    linkBtn.innerHTML = LINK_SVG;
+
+    bar.append(boldBtn, italicBtn, linkBtn);
+    document.body.appendChild(bar);
+    selectionToolbar = bar;
+
+    // Position above selection; flip below if too close to top of viewport
+    const bRect = bar.getBoundingClientRect();
+    let top  = rect.top  - bRect.height - 8;
+    let left = rect.left + rect.width / 2 - bRect.width / 2;
+    if (top < 8) top = rect.bottom + 8;
+    left = Math.max(8, Math.min(window.innerWidth - bRect.width - 8, left));
+    css(bar, { top: top + 'px', left: left + 'px' });
+  }
+
+  function makeSelBtn(label, active, action) {
+    const btn = el('button', { 'data-editor-ui': '' });
+    btn.textContent = label;
+    css(btn, {
+      width: '28px',
+      height: '28px',
+      padding: '0',
+      background: active ? 'rgba(255,255,255,0.18)' : 'transparent',
+      border: 'none',
+      borderRadius: '4px',
+      color: '#e8e8f0',
+      cursor: 'pointer',
+      fontSize: '13px',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      lineHeight: '1',
+    });
+    btn.addEventListener('mouseenter', () => {
+      btn.style.background = active ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)';
+    });
+    btn.addEventListener('mouseleave', () => {
+      btn.style.background = active ? 'rgba(255,255,255,0.18)' : 'transparent';
+    });
+    // mousedown + preventDefault keeps the selection alive while we act on it
+    btn.addEventListener('mousedown', e => {
+      e.preventDefault();
+      action();
+    });
+    return btn;
+  }
+
+  function hideSelectionToolbar() {
+    if (selectionToolbar) {
+      selectionToolbar.remove();
+      selectionToolbar = null;
+    }
+  }
+
   function bindLinkHandlers() {
     // Capture phase so we intercept before the browser follows the href
     document.addEventListener('click', handleLinkClick, true);
@@ -2328,6 +2467,7 @@ RULES:
     activateNav();
     bindMutationObserver();
     bindLinkHandlers();
+    bindSelectionToolbar();
     showStatus('Edit mode active');
 
     // Async — silently re-links folder if previously granted, else shows banner
