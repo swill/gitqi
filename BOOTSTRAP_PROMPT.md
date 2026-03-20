@@ -106,7 +106,7 @@ Generate a single index.html file with the following:
 ---
 
 OUTPUT:
-Return ONLY the complete index.html file contents.
+Return ONLY the complete index.html file contents, named index.html.
 No explanation, no markdown fences, no preamble.
 Start your response with: <!DOCTYPE html>
 ```
