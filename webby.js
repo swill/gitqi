@@ -2208,7 +2208,10 @@ RULES:
     css(boldBtn, { fontWeight: '700', fontFamily: 'Georgia, serif' });
 
     const italicBtn = makeSelBtn('I', italicActive, () => {
+      const anchor = window.getSelection()?.anchorNode;
+      const emContainer = anchor && (anchor.nodeType === Node.TEXT_NODE ? anchor.parentElement : anchor).closest('[data-editable]');
       document.execCommand('italic');
+      if (emContainer) normalizeEm(emContainer);
       hideSelectionToolbar();
     });
     css(italicBtn, { fontStyle: 'italic', fontFamily: 'Georgia, serif' });
@@ -2323,6 +2326,23 @@ RULES:
       selectionToolbar.remove();
       selectionToolbar = null;
     }
+  }
+
+  function normalizeEm(container) {
+    // Convert any <i> tags to <em> for semantic consistency
+    Array.from(container.querySelectorAll('i')).forEach(iEl => {
+      const em = document.createElement('em');
+      while (iEl.firstChild) em.appendChild(iEl.firstChild);
+      iEl.replaceWith(em);
+    });
+    // Merge directly adjacent <em> siblings
+    Array.from(container.querySelectorAll('em')).forEach(em => {
+      if (em.previousSibling && em.previousSibling.nodeName === 'EM') {
+        const prev = em.previousSibling;
+        while (em.firstChild) prev.appendChild(em.firstChild);
+        em.remove();
+      }
+    });
   }
 
   function bindLinkHandlers() {
