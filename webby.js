@@ -2213,6 +2213,36 @@ RULES:
     });
     css(italicBtn, { fontStyle: 'italic', fontFamily: 'Georgia, serif' });
 
+    const anchorNode = sel.anchorNode;
+    const anchorEl = anchorNode && (anchorNode.nodeType === Node.TEXT_NODE ? anchorNode.parentElement : anchorNode);
+    const codeActive = !!(anchorEl && anchorEl.closest('code'));
+
+    const CODE_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`;
+    const codeBtn = makeSelBtn('', codeActive, () => {
+      const curSel = window.getSelection();
+      if (!curSel || curSel.isCollapsed) { hideSelectionToolbar(); return; }
+      const r = curSel.getRangeAt(0);
+      const curNode = curSel.anchorNode;
+      const curEl = curNode && (curNode.nodeType === Node.TEXT_NODE ? curNode.parentElement : curNode);
+      const existingCode = curEl && curEl.closest('code');
+      if (existingCode) {
+        const parent = existingCode.parentNode;
+        while (existingCode.firstChild) parent.insertBefore(existingCode.firstChild, existingCode);
+        existingCode.remove();
+      } else {
+        const codeEl = document.createElement('code');
+        try {
+          r.surroundContents(codeEl);
+        } catch (_) {
+          codeEl.appendChild(r.extractContents());
+          r.insertNode(codeEl);
+        }
+      }
+      setDirty(true);
+      hideSelectionToolbar();
+    });
+    codeBtn.innerHTML = CODE_SVG;
+
     const LINK_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`;
     const linkBtn = makeSelBtn('', false, () => {
       const node = sel.anchorNode;
@@ -2236,7 +2266,7 @@ RULES:
     });
     linkBtn.innerHTML = LINK_SVG;
 
-    bar.append(boldBtn, italicBtn, linkBtn);
+    bar.append(boldBtn, italicBtn, codeBtn, linkBtn);
     document.body.appendChild(bar);
     selectionToolbar = bar;
 
