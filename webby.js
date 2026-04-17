@@ -25,6 +25,10 @@
   let pagesInventory = null; // { pages: [{ file, title, navLabel }] } — loaded from webby-pages.json
   let lastSyncedNavHTML = ''; // snapshot of nav after last sync; change detection for auto-save
 
+  const UNDO_LIMIT = 20;
+  let undoStack = [];
+  let redoStack = [];
+
   // Webby requires the File System Access API (Chrome, Edge, Safari 15.2+).
   // Firefox and other browsers that lack showDirectoryPicker are not supported.
   if (!('showDirectoryPicker' in window)) {
@@ -93,6 +97,21 @@
     const spacer = el('div');
     css(spacer, { flex: '1' });
 
+    const undoBtn = toolbarBtn('↩');
+    undoBtn.id = '__webby-undo-btn';
+    undoBtn.title = 'Undo (Ctrl+Z)';
+    undoBtn.disabled = true;
+    undoBtn.style.opacity = '0.35';
+
+    const redoBtn = toolbarBtn('↪');
+    redoBtn.id = '__webby-redo-btn';
+    redoBtn.title = 'Redo (Ctrl+Shift+Z)';
+    redoBtn.disabled = true;
+    redoBtn.style.opacity = '0.35';
+
+    undoBtn.addEventListener('click', undo);
+    redoBtn.addEventListener('click', redo);
+
     const pagesBtn = toolbarBtn('Pages');
     const themeBtn = toolbarBtn('Theme');
     const exportBtn = toolbarBtn('Export');
@@ -103,7 +122,7 @@
     exportBtn.addEventListener('click', exportToFile);
     publishBtn.addEventListener('click', publishSite);
 
-    bar.append(title, spacer, status, pagesBtn, themeBtn, exportBtn, publishBtn);
+    bar.append(title, spacer, status, undoBtn, redoBtn, pagesBtn, themeBtn, exportBtn, publishBtn);
     document.body.prepend(bar);
 
     // Push body content down so toolbar doesn't overlap
@@ -537,7 +556,8 @@
     btn.addEventListener('click', e => {
       e.stopPropagation();
       const label = section.dataset.zoneLabel || section.dataset.zone || 'this section';
-      if (!confirm(`Delete "${label}"? This cannot be undone.`)) return;
+      if (!confirm(`Delete "${label}"?`)) return;
+      snapshotForUndo();
       // Clean up adjacent add-button
       const next = section.nextElementSibling;
       if (next && next.classList.contains('__webby-add-wrap')) next.remove();
@@ -690,6 +710,7 @@
       sectionPending = true;
 
       try {
+        snapshotForUndo();
         await reformatSection(section, description);
         overlay.remove();
         showStatus('Section reformatted ✓');
@@ -903,6 +924,7 @@ RULES:
       textarea.disabled = true;
       navPending = true;
       try {
+        snapshotForUndo();
         await reformatNav(nav, description);
         overlay.remove();
         showStatus('Nav reformatted ✓');
@@ -1358,6 +1380,7 @@ RULES:
       pending = true;
 
       try {
+        snapshotForUndo();
         await generatePage(description, navLabel, filename);
         overlay.remove();
         showStatus(`Page "${navLabel}" created ✓`);
@@ -1522,6 +1545,7 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
 
   async function deletePageFromSite(page) {
     const { file: filename, navLabel } = page;
+    snapshotForUndo();
 
     // 1. Remove nav links pointing to this page from the current DOM
     removePageFromNav(document.querySelector('nav'), filename);
@@ -1546,6 +1570,7 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
   // ─── Mutation Observer ────────────────────────────────────────────────────
 
   function bindMutationObserver() {
+    if (mutationObserver) mutationObserver.disconnect();
     mutationObserver = new MutationObserver(mutations => {
       for (const m of mutations) {
         // Ignore changes originating from editor UI itself
@@ -1561,6 +1586,137 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
       subtree: true,
       childList: true,
       characterData: true,
+    });
+  }
+
+  // ─── Undo / Redo ─────────────────────────────────────────────────────────
+  //
+  // Snapshot-based undo for structural operations (AI actions, delete, etc.).
+  // Text edits rely on the browser's native contenteditable undo (Ctrl+Z).
+
+  function captureSnapshot() {
+    // Clone body without editor UI or runtime-only attributes
+    const bodyClone = document.body.cloneNode(true);
+    bodyClone.querySelectorAll('[data-editor-ui]').forEach(n => n.remove());
+    bodyClone.querySelectorAll('[contenteditable]').forEach(n => n.removeAttribute('contenteditable'));
+    bodyClone.querySelectorAll('[spellcheck]').forEach(n => n.removeAttribute('spellcheck'));
+    bodyClone.querySelectorAll('[data-webby-bound]').forEach(n => n.removeAttribute('data-webby-bound'));
+    bodyClone.querySelectorAll('[data-webby-nav-bound]').forEach(n => n.removeAttribute('data-webby-nav-bound'));
+
+    const styleEl = document.querySelector('style');
+
+    const sectionStyles = [];
+    document.querySelectorAll('style[id^="__webby-section-"]').forEach(s => {
+      sectionStyles.push({ id: s.id, content: s.textContent });
+    });
+    const navStyleEl = document.getElementById('__webby-nav-styles');
+
+    return {
+      bodyHTML:      bodyClone.innerHTML,
+      styleContent:  styleEl ? styleEl.textContent : '',
+      sectionStyles,
+      navStyles:     navStyleEl ? navStyleEl.textContent : null,
+    };
+  }
+
+  function snapshotForUndo() {
+    undoStack.push(captureSnapshot());
+    if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+    redoStack = [];
+    updateUndoRedoButtons();
+  }
+
+  function restoreSnapshot(snapshot) {
+    // Disconnect observer before mass DOM mutation
+    if (mutationObserver) { mutationObserver.disconnect(); mutationObserver = null; }
+
+    // Close any open overlays so their stale DOM references are dropped
+    closeLinkPopover();
+    hideSelectionToolbar();
+
+    // Save editor UI nodes (toolbar, banner, panels) — they have live event listeners
+    const editorEls = Array.from(document.body.children).filter(c => c.hasAttribute('data-editor-ui'));
+
+    // Replace body content (body.style is preserved; only children are replaced)
+    document.body.innerHTML = snapshot.bodyHTML;
+
+    // Re-attach editor UI (all position:fixed so order doesn't matter visually)
+    editorEls.forEach(edEl => document.body.appendChild(edEl));
+
+    // Restore main style block
+    const styleEl = document.querySelector('style');
+    if (styleEl && snapshot.styleContent) styleEl.textContent = snapshot.styleContent;
+
+    // Restore section-specific and nav style blocks
+    document.querySelectorAll('style[id^="__webby-section-"]').forEach(s => s.remove());
+    const existingNavStyles = document.getElementById('__webby-nav-styles');
+    if (existingNavStyles) existingNavStyles.remove();
+    snapshot.sectionStyles.forEach(({ id, content }) => {
+      const s = document.createElement('style');
+      s.id = id;
+      s.textContent = content;
+      document.head.appendChild(s);
+    });
+    if (snapshot.navStyles) {
+      const s = document.createElement('style');
+      s.id = '__webby-nav-styles';
+      s.textContent = snapshot.navStyles;
+      document.head.appendChild(s);
+    }
+
+    // Re-activate editing on restored content
+    activateZones();
+    activateNav();
+    bindMutationObserver();
+
+    // Re-baseline nav sync so the next auto-save doesn't over-eagerly sync
+    lastSyncedNavHTML = getNavHTML();
+
+    setDirty(true);
+    updateUndoRedoButtons();
+  }
+
+  function undo() {
+    if (!undoStack.length) return;
+    redoStack.push(captureSnapshot());
+    restoreSnapshot(undoStack.pop());
+    showStatus('Undone');
+  }
+
+  function redo() {
+    if (!redoStack.length) return;
+    undoStack.push(captureSnapshot());
+    restoreSnapshot(redoStack.pop());
+    showStatus('Redone');
+  }
+
+  function updateUndoRedoButtons() {
+    const undoBtn = document.getElementById('__webby-undo-btn');
+    const redoBtn = document.getElementById('__webby-redo-btn');
+    if (undoBtn) {
+      undoBtn.disabled      = undoStack.length === 0;
+      undoBtn.style.opacity = undoStack.length === 0 ? '0.35' : '1';
+    }
+    if (redoBtn) {
+      redoBtn.disabled      = redoStack.length === 0;
+      redoBtn.style.opacity = redoStack.length === 0 ? '0.35' : '1';
+    }
+  }
+
+  function bindUndoRedo() {
+    document.addEventListener('keydown', e => {
+      // Let the browser handle Ctrl+Z inside contenteditable (text undo)
+      if (e.target.isContentEditable) return;
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+
+      if (e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if ((e.key === 'z' && e.shiftKey) || e.key === 'y') {
+        e.preventDefault();
+        redo();
+      }
     });
   }
 
@@ -1730,6 +1886,7 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
       cancelBtn.disabled = true;
 
       try {
+        snapshotForUndo();
         await generateSection(description, insertAfterZone);
         overlay.remove();
         showStatus('Section added ✓');
@@ -3165,6 +3322,7 @@ RULES:
     bindMutationObserver();
     bindLinkHandlers();
     bindSelectionToolbar();
+    bindUndoRedo();
     showStatus('Edit mode active');
 
     // Silently re-links folder if previously granted, else shows the link banner.
