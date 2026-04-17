@@ -2,7 +2,7 @@
 
 A zero-dependency, browser-based inline editing system for static websites.
 
-The site owner opens `index.html` locally, edits content in-place, and publishes directly to GitHub Pages — no terminal, no CMS, no backend required.
+The site owner opens their HTML files locally, edits content in-place, and publishes directly to GitHub Pages — no terminal, no CMS, no backend required.
 
 ---
 
@@ -10,37 +10,37 @@ The site owner opens `index.html` locally, edits content in-place, and publishes
 
 Webby has two modes:
 
-- **Edit mode** — activated automatically when `secrets.js` is present alongside `index.html`. The editor toolbar, editable zones, and AI tools all activate.
+- **Edit mode** — activated automatically when `secrets.js` is present alongside the HTML files. The editor toolbar, editable zones, and AI tools all activate.
 - **Public mode** — the deployed site. No editor code, no credentials, no overhead. `webby.js` and `secrets.js` are stripped from the published output.
 
-The content "database" is the HTML file itself. The site owner edits text by clicking and typing directly on the page, replaces images by clicking them, and uses the AI assistant to generate new sections — all without touching code.
+The content "database" is the HTML file itself. The site owner edits text by clicking and typing directly on the page, replaces images by clicking them, and uses the AI assistant to generate new sections or entire new pages — all without touching code.
 
 ---
 
 ## Quick start (for site owners)
 
-### 1. Generate your initial `index.html`
+### 1. Generate your initial HTML
 
-Use the [Bootstrap Prompt](./BOOTSTRAP_PROMPT.md) with Claude.ai (attach 2–5 inspiration images and fill in the bracketed fields). The output is a complete `index.html` ready to use.
+Use the [Bootstrap Prompt](./BOOTSTRAP_PROMPT.md) with Claude.ai (attach 2–5 inspiration images and fill in the bracketed fields). Choose **Single-page** for a simple one-page site or **Multi-page** for a site with separate pages per topic.
 
-Download the `index.html` file to a folder on your computer where you would like your website editing to live.  An `assets` folder will also be created in this location.
+Save the output HTML file(s) to a folder on your computer. Create an `assets/` subfolder in the same location for images.
 
 ### 2. Create a GitHub repository and enable GitHub Pages
 
 1. Create a new **public** repository on GitHub (e.g. `jane/jane-osteopathy`)
-2. Make an initial commit to establish a `main` branch.
+2. Make an initial commit to establish a `main` branch
 3. Go to **Settings → Pages**
 4. Under *Source*, select **Deploy from a branch**
 5. Set branch to `main`, folder to `/ (root)`, and click **Save**
 
-That's it — GitHub Pages will serve files directly from the root of your `main` branch. Every time Webby pushes `index.html`, the live site updates automatically. No workflow files or GitHub Actions needed.
+GitHub Pages will serve files directly from the root of your `main` branch. Every time Webby publishes, the live site updates automatically. No workflow files or GitHub Actions needed.
 
-### 3. Add `secrets.js` to the same folder you saved `index.html`
+### 3. Add `secrets.js` to the same folder as your HTML files
 
 ```js
 window.SITE_SECRETS = {
-  geminiKey:   "AIza...",         // Google AI Studio API key (for AI section generation)
-  githubToken: "ghp_...",         // GitHub fine-grained PAT (contents: read + write)
+  geminiKey:   "AIza...",              // Google AI Studio API key (for AI features)
+  githubToken: "ghp_...",             // GitHub fine-grained PAT (contents: read + write)
   repo:        "jane/jane-osteopathy",
   branch:      "main"
 };
@@ -48,36 +48,56 @@ window.SITE_SECRETS = {
 
 Get your free Gemini API key at [aistudio.google.com](https://aistudio.google.com) — no billing required.
 
-> **This file stays on your computer only.** Webby publishes your site by pushing `index.html` directly to GitHub via the API — your local folder is never a git repository, and `secrets.js` is never sent anywhere except directly to the GitHub and Google APIs.
+> **This file stays on your computer only.** Webby publishes by pushing files directly to GitHub via the API — `secrets.js` is never sent anywhere except directly to the GitHub and Google APIs.
 
-### 4. Open `index.html` in your browser
+### 4. Open your HTML file in your browser
 
-> **Use Chrome or Edge** since these browsers support the File System Access API, which lets Webby save your edits directly back to `index.html` on disk. Firefox and Safari works but requires you to manually export and replace the file after each session.
+> **Use Chrome or Edge.** These are the only browsers that fully support the File System Access API, which lets Webby save your edits directly back to your files on disk. Safari and Firefox are not supported.
 
 The editor activates automatically. You'll see a dark toolbar at the top of the page.
 
 ### 5. Link your site folder
 
-A banner will appear below the toolbar on first open. Click **Select Folder** and choose the folder containing your `index.html`. The path is shown in the banner as a hint.
+A banner will appear below the toolbar on first open. Click **Select Folder** and choose the folder containing your HTML files. The path is shown in the banner as a hint.
 
-Once linked, every edit auto-saves to your local `index.html` within 1.5 seconds — so your changes are never lost on reload or restart. The folder stays linked across sessions (one browser permission prompt per session).
+Once linked, every edit auto-saves to your local files within 1.5 seconds — so changes are never lost on reload or restart. For multi-page sites, nav changes are automatically synced across all pages. The folder stays linked across sessions (one browser permission prompt per session).
 
 ### 6. Edit your content
 
-- **Text** — click any text and type directly on the page
-- **Links** — click any link (including nav links) to edit its display text, URL, or open-in-new-tab setting
-- **Images** — click any image to replace it; the new image saves to your local `assets/` folder and uploads to GitHub automatically
-- **Navigation** — hover the nav bar and click **⟳ Reformat Nav** to restructure it with AI
-- **New sections** — hover between sections and click **+ Add Section**; describe what you want and the AI generates it
-- **Reformat sections** — if you want to change the format with AI, while keeping the content you have developed
-- **Delete sections** — that are no longer relevant
-- **Theme** — click **Theme** to adjust colours, fonts, and spacing live
+**Text**
+Click any text and type directly on the page.
+
+**Text formatting**
+Select any text inside an editable element to reveal a floating toolbar with **Bold**, *Italic*, `Code`, and Link buttons.
+
+**Links**
+Click any link (including nav links) to open the link editor popover. Fields: display text, URL, open-in-new-tab. Use the page/section picker dropdown to jump to any page or anchor on your site. A **Go to link →** button lets you preview the destination.
+
+**Images**
+Click any image to replace it. The new image saves to your local `assets/` folder and uploads to GitHub automatically.
+
+**Sections**
+- Hover between sections and click **+ Add Section** to generate a new themed section with AI
+- Hover any section and click **⟳ Reformat** to change its layout or structure with AI, preserving existing content
+- Hover any section and click **✕ Delete Section** to remove it
+
+**Navigation**
+Hover the nav bar and click **⟳ Reformat Nav** to restructure it with AI. The updated nav syncs to all other pages automatically.
+
+**Pages** *(multi-page sites)*
+Click **Pages** in the toolbar to open the pages panel. From there you can navigate between pages, add new AI-generated pages, or delete pages. New page links are automatically added to the nav and synced across all pages.
+
+**Theme**
+Click **Theme** to adjust colours, fonts, spacing, favicon, page title, and meta description. All changes are live.
+
+**Undo / Redo**
+The **↩** and **↪** buttons in the toolbar undo and redo structural changes (AI actions, section/page deletions). Keyboard shortcuts: `Ctrl+Z` / `Ctrl+Shift+Z`. Text edits use the browser's native undo.
 
 ### 7. Publish
 
-Click **Publish** in the toolbar. Webby uses the GitHub API to push `index.html` directly to your repository — no git, no terminal, no syncing. GitHub Pages serves the updated file within ~60 seconds.
+Click **Publish** in the toolbar. Webby uses the GitHub API to push all pages and the `webby-pages.json` inventory directly to your repository — no git, no terminal. GitHub Pages serves the updated site within ~60 seconds.
 
-> **How it works under the hood:** Webby serializes the current page (stripping all editor UI and credentials), then calls the GitHub Contents API to write the file. Images you replaced during editing are also committed to `assets/` in your repo.
+> **How it works:** Webby serializes each page (stripping all editor UI and credentials), then calls the GitHub Contents API to write the files. Images are committed to `assets/` in your repo. The `webby-pages.json` manifest is pushed alongside the HTML files.
 
 ---
 
@@ -87,22 +107,18 @@ By default your site is served at `https://username.github.io/repo-name`. To use
 
 ### Option A — Subdomain (www or any prefix) — CNAME record
 
-Use this if your domain will be `www.example.com` or `blog.example.com`.
-
 1. In your DNS provider, add a **CNAME** record:
    | Name | Type | Value |
    |---|---|---|
    | `www` | CNAME | `username.github.io` |
-2. In your GitHub repo, go to **Settings → Pages → Custom domain**, enter `www.example.com`, and click **Save**. GitHub will create a `CNAME` file in your repo root automatically.
+2. In your GitHub repo, go to **Settings → Pages → Custom domain**, enter `www.example.com`, and click **Save**. GitHub will create a `CNAME` file automatically.
 3. Check **Enforce HTTPS** once the certificate is provisioned (usually a few minutes).
 
-> **Important:** Webby publishes by overwriting `index.html` only — it does not touch the `CNAME` file. Your custom domain stays configured across all publishes.
+> **Important:** Webby publishes by overwriting HTML files only — it does not touch the `CNAME` file. Your custom domain stays configured across all publishes.
 
 ### Option B — Apex domain (no www) — A records
 
-Use this if your domain will be `example.com` (no subdomain).
-
-1. In your DNS provider, add four **A** records pointing to GitHub's IP addresses:
+1. In your DNS provider, add four **A** records:
    | Name | Type | Value |
    |---|---|---|
    | `@` | A | `185.199.108.153` |
@@ -113,7 +129,7 @@ Use this if your domain will be `example.com` (no subdomain).
 3. In your GitHub repo, go to **Settings → Pages → Custom domain**, enter `example.com`, and click **Save**.
 4. Check **Enforce HTTPS** once the certificate is provisioned.
 
-> DNS changes can take up to 48 hours to propagate, though they are often much faster. GitHub will warn you if the domain isn't verified yet — just wait a few minutes and refresh.
+> DNS changes can take up to 48 hours to propagate. GitHub will warn you if the domain isn't verified yet — wait a few minutes and refresh.
 
 ---
 
@@ -123,7 +139,7 @@ Webby uses data attributes to identify editable regions. These must be present i
 
 | Attribute | Applied to | Purpose |
 |---|---|---|
-| `data-zone` | `<section>` | Marks a top-level editable section. Value is a slug, e.g. `"hero"`. |
+| `data-zone` | `<section>` | Marks a top-level editable section. Value is a slug, e.g. `"hero"`. Also used as the element `id` for anchor links. |
 | `data-zone-label` | `<section>` | Human-readable label shown in the delete confirmation, e.g. `"Hero"`. |
 | `data-editable` | Any text element | Makes the element directly editable via `contenteditable`. |
 | `data-editable-image` | `<img>` | Makes the image replaceable by clicking. |
@@ -146,13 +162,30 @@ Two script tags must appear in `<head>` (after the `<style>` block) for edit mod
 
 ```html
 <script src="./secrets.js"></script>
-<script src="https://YOUR_GITHUB_PAGES_URL/webby.js"></script>
+<script src="https://swill.github.io/webby/webby.js"></script>
 ```
-
-Replace `YOUR_GITHUB_PAGES_URL` with the URL where you host `webby.js` (see [Hosting webby.js](#hosting-webbyjs) below).
 
 ---
 
+## Multi-page sites
+
+Multi-page sites use a `webby-pages.json` manifest in the site folder alongside the HTML files:
+
+```json
+{
+  "pages": [
+    { "file": "index.html",    "title": "Home — My Site",    "navLabel": "Home" },
+    { "file": "about.html",    "title": "About — My Site",   "navLabel": "About" },
+    { "file": "services.html", "title": "Services — My Site","navLabel": "Services" }
+  ]
+}
+```
+
+Webby creates and maintains this file automatically. It is pushed to GitHub on every publish. If you add Webby to an existing single-page site, the manifest is created automatically the first time you link your folder.
+
+**Nav sync** — whenever the nav changes on any page (via Reformat Nav, Add Page, or Delete Page), the updated nav is written to every other page file on disk automatically, without any manual action.
+
+---
 
 ## Hosting webby.js
 
@@ -160,37 +193,21 @@ Replace `YOUR_GITHUB_PAGES_URL` with the URL where you host `webby.js` (see [Hos
 
 **Latest version** (always up to date):
 ```
-https://<your-username>.github.io/<this-repo>/webby.js
-```
-
-**Pinned version** (recommended for production — immune to breaking changes):
-```
-https://<your-username>.github.io/<this-repo>/webby-1.0.0.js
-```
-
-Pinned versioned files (e.g. `webby-1.0.0.js`) are committed alongside `webby.js` on each release and are never modified after publishing.
-
-> **One-time setup required:** Go to **Settings → Pages → Source → Deploy from a branch**, set branch to `main`, folder to `/ (root)`, and save. After that, `make release` keeps the live files up to date automatically — no further configuration needed.
-
----
-
-## Reference my version
-
-**Latest version** (the bleeding edge)
-```
 https://swill.github.io/webby/webby.js
 ```
 
 **Pinned version** (recommended for production — immune to breaking changes):
 ```
-https://swill.github.io/webby/webby-x.y.z.js
+https://swill.github.io/webby/webby-1.1.0.js
 ```
+
+Pinned versioned files are committed alongside `webby.js` on each release and are never modified after publishing.
+
+> **One-time setup:** Go to **Settings → Pages → Source → Deploy from a branch**, set branch to `main`, folder to `/ (root)`, and save. After that, `make release` keeps the live files up to date automatically.
 
 ---
 
 ## Versioning
-
-Check for the latest version in the root directory.
 
 Versions follow [Semantic Versioning](https://semver.org/):
 
@@ -216,7 +233,7 @@ make serve
 make check
 
 # Release a new version and publish to GitHub Pages
-make release VERSION=1.1.0
+make release VERSION=1.2.0
 ```
 
 See the [Makefile](./Makefile) for full details on what `make release` does.

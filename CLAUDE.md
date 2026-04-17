@@ -2,10 +2,10 @@
 
 ## Overview
 
-A zero-dependency, browser-based inline editing system for static websites. The site owner opens `index.html` locally, edits content in-place, and publishes directly to GitHub Pages — no terminal, no CMS, no backend.
+A zero-dependency, browser-based inline editing system for static websites. The site owner opens their HTML files locally, edits content in-place, and publishes directly to GitHub Pages — no terminal, no CMS, no backend.
 
 The system has two distinct modes:
-- **Edit mode** — activated when `secrets.js` is present alongside `index.html`
+- **Edit mode** — activated when `secrets.js` is present alongside the HTML files
 - **Public mode** — the deployed site with no editor code, no credentials, no overhead
 
 ---
@@ -16,44 +16,53 @@ The system has two distinct modes:
 
 ```
 my-site/
-├── index.html       ← Source of truth: content + CSS vars + structure
-├── secrets.js       ← Never published. Sets window.SITE_SECRETS (keys, repo)
+├── index.html          ← Main page; content + CSS vars + structure
+├── about.html          ← Additional pages (multi-page sites)
+├── webby-pages.json    ← Page inventory, auto-managed by Webby
+├── secrets.js          ← Never published. Sets window.SITE_SECRETS
 └── assets/
     └── *.jpg / *.png
 ```
 
-This folder is **not** a git repository. Webby publishes `index.html` and uploads images directly to GitHub via the REST API. `secrets.js` never leaves the local machine.
+This folder is **not** a git repository. Webby publishes HTML files and uploads images directly to GitHub via the REST API. `secrets.js` never leaves the local machine.
 
 ### Remote GitHub repository
 
 ```
 username/repo-name  (GitHub)
 ├── index.html
+├── about.html
+├── webby-pages.json
 └── assets/
     └── *.jpg / *.png
 ```
 
-GitHub Pages is configured to serve files directly from the root of the `main` branch ("Deploy from branch → main → / (root)"). Any push to `main` — including Webby's API commits — updates the live site automatically. No GitHub Actions workflow is required.
+GitHub Pages is configured to serve from the root of the `main` branch ("Deploy from branch → main → / (root)"). Any push — including Webby's API commits — updates the live site automatically. No GitHub Actions workflow is required.
 
 ---
 
 ## The Editor Script (`webby.js`)
 
-Hosted externally (e.g. your own GitHub Pages). Included in `index.html` only during local editing — stripped from the published output.
+Hosted externally on GitHub Pages. Included in each HTML page only during local editing — stripped from the published output.
 
 ### Initialization
 
 ```
 init()  [async]
-  ├── If !FS_SUPPORTED (Firefox): restoreFromCache() → restore from localStorage
   ├── injectToolbar()
   ├── activateZones()
+  ├── activateNav()
   ├── bindMutationObserver()
   ├── bindLinkHandlers()
+  ├── bindSelectionToolbar()
+  ├── bindUndoRedo()
   └── initFileAccess()  [async]
         ├── Load FileSystemDirectoryHandle from IndexedDB
+        │     (migrates v1.0.x per-page keys → per-directory keys automatically)
         ├── If found + permission granted → dirHandle = stored (silent)
+        │     └── loadPagesInventory()
         └── Else → showAccessBanner()
+  └── lastSyncedNavHTML = getNavHTML()  ← baseline for nav change detection
 ```
 
 ### Required Globals (set by `secrets.js`)
@@ -65,6 +74,14 @@ window.SITE_SECRETS = {
   repo:        "user/repo", // e.g. "jane/jane-osteopathy"
   branch:      "main"       // Deployment branch
 };
+```
+
+### Key Constants
+
+```js
+const CURRENT_FILENAME = location.pathname.split('/').pop() || 'index.html';
+const HANDLE_KEY = 'dir:' + location.href.substring(0, location.href.lastIndexOf('/') + 1);
+// Keyed by site directory (not page path) so all pages in the same folder share one handle
 ```
 
 ---
@@ -79,7 +96,7 @@ Responsible for identifying and activating editable regions.
 
 | Attribute | Purpose |
 |---|---|
-| `data-zone` | Marks a top-level editable section (e.g. `"hero"`, `"about"`) |
+| `data-zone` | Marks a top-level editable section (e.g. `"hero"`, `"about"`). Also set as the element `id` for anchor links. |
 | `data-zone-label` | Human-readable label shown in the delete confirmation |
 | `data-editable` | Text node is directly editable via `contenteditable` |
 | `data-editable-image` | Image can be replaced by clicking |
@@ -91,11 +108,12 @@ activateZones()
   ├── Query all [data-zone] elements
   ├── For each: activateZone(section)
   │     ├── Add contenteditable + spellcheck to [data-editable] children
-  │     ├── Bind image click handlers on [data-editable-image]
-  │     └── Inject "Delete Section" button (visible on hover, with confirm guard)
+  │     ├── Bind image click handlers on all <img> in zone
+  │     ├── Set section.id = section.dataset.zone (for anchor links)
+  │     ├── injectDeleteButton(section)    ← hover-visible ✕ button with confirm + snapshotForUndo()
+  │     └── injectReformatButton(section)  ← hover-visible ⟳ button → promptReformatSection()
   └── injectAddSectionButtons()
         └── Insert "Add Section" button before first zone and after each zone
-            (buttons are visible on hover of neighboring zones)
 
 deactivateZones()
   ├── Remove all contenteditable + spellcheck attributes
@@ -106,108 +124,171 @@ deactivateZones()
 
 Fixed-position bar injected at the top of the page in edit mode. Marked `data-editor-ui` so it is stripped on export/publish.
 
-**Elements:**
+**Elements (left to right):**
 
 - Site title with `●` dirty indicator (unsaved changes)
-- Status message area (right of title)
-- **Theme** button → open/close CSS variable editor panel
-- **Export** button → download clean `index.html`
-- **Publish** button → commit to GitHub and trigger deploy
+- Spacer
+- Status message area
+- **↩ Undo** button — disabled until undo stack has entries
+- **↪ Redo** button — disabled until redo stack has entries
+- **Pages** button → open/close Pages panel
+- **Theme** button → open/close CSS variable + site identity editor
+- **Export** button → download clean HTML for the current page
+- **Publish** button → commit all pages and webby-pages.json to GitHub
 
 **Functions:**
 
 ```
-injectToolbar()     ← Create and prepend toolbar; adjust body padding-top
-showStatus(msg)     ← Display temporary status text ("Published ✓", "Error: ...")
-setDirty(bool)      ← Toggle ● indicator; schedules auto-save when true
+injectToolbar()   ← Create and prepend toolbar; adjust body padding-top;
+                    shift fixed <nav> down by 44px if present
+showStatus(msg)   ← Display temporary status text in toolbar
+setDirty(bool)    ← Toggle ● indicator; schedules auto-save when true
 ```
 
 ### 3. File Persistence
 
-Keeps `index.html` on disk in sync with the current DOM state. Two paths:
-
-**Primary — File System Access API (Chrome, Edge, Safari):**
+Keeps HTML files on disk in sync with the current DOM state using the File System Access API. Only Chrome and Edge are supported — opening in any other browser shows a blocking message.
 
 ```
 initFileAccess()
-  ├── Load FileSystemDirectoryHandle from IndexedDB
-  ├── If found: verifyPermission() → if granted, silently re-link
+  ├── Load FileSystemDirectoryHandle from IndexedDB (with v1.0.x key migration)
+  ├── If found: verifyPermission() → if granted, silently re-link → loadPagesInventory()
   └── If not found or denied: showAccessBanner()
 
 showAccessBanner()
-  └── Banner below toolbar: shows local path hint + "Select Folder" button
-        └── On click: showDirectoryPicker() → store handle → writeIndexToLocalFile()
+  └── Banner below toolbar: local path hint + "Select Folder" button
+        └── On click: showDirectoryPicker() → store handle in IndexedDB
+              → writeCurrentPageToLocalFile() → loadPagesInventory()
 
-scheduleAutoSave()  ← Debounced 1.5s; triggered by setDirty(true)
-  └── writeIndexToLocalFile()
-        └── serialize({ local: true }) → write to index.html on disk
+saveChanges()  ← called by auto-save timer
+  ├── writeCurrentPageToLocalFile()
+  └── syncNavToOtherPagesIfChanged()
+
+scheduleAutoSave()  ← debounced 1500ms; triggered by setDirty(true)
+  └── saveChanges()
+
+writeCurrentPageToLocalFile()
+  └── serialize({ local: true }) → write CURRENT_FILENAME to dirHandle
+
+writePageToLocalFile(filename, content)
+  └── Write any page file (used by page generator and nav sync)
 
 writeImageToLocalDir(file)
-  └── Write to assets/ in the linked folder (called alongside GitHub upload)
+  └── Write to assets/ subdirectory in the linked folder
 ```
 
-**Fallback — localStorage (Firefox):**
+The `local: true` flag on `serialize()` preserves the `secrets.js` and `webby.js` script tags so edit mode activates correctly on the next open. The default `local: false` strips them for the deployed site.
+
+### 4. Pages Inventory
+
+Tracks all pages in a `webby-pages.json` manifest alongside the HTML files. Auto-created on first use; auto-upgraded for existing single-page sites.
+
+```js
+// Structure
+{ "pages": [{ "file": "index.html", "title": "Home", "navLabel": "Home" }, ...] }
+```
 
 ```
-writeDraftToCache()   ← serialize({ local: true }) → localStorage
-restoreFromCache()    ← Parse saved HTML → restore <style> + body.innerHTML
-clearDraftCache()     ← Called after successful publish or export
+loadPagesInventory()
+  ├── Try to read webby-pages.json from dirHandle
+  ├── If found: parse + ensure CURRENT_FILENAME is registered
+  └── If not found: seed from current page → savePagesInventory()
+
+savePagesInventory()
+  └── Write webby-pages.json to dirHandle
 ```
 
-The `local: true` flag on `serialize()` preserves the `secrets.js` and `webby.js` script tags so edit mode activates correctly on the next open. The default `local: false` strips them for the deployed public site.
+### 5. Nav Sync
 
-### 4. Mutation Observer
+On every auto-save, compares the current nav HTML against a snapshot taken after the last sync. If changed, writes the updated nav into every other page file on disk.
+
+Also triggered immediately (not via auto-save timer) after: Reformat Nav, Add Page, Delete Page.
+
+```
+getNavHTML()
+  └── Clone nav → strip [data-editor-ui] + data-webby-nav-bound → return outerHTML
+
+syncNavToOtherPagesIfChanged()
+  ├── currentNavHTML = getNavHTML()
+  ├── if currentNavHTML === lastSyncedNavHTML → return (no-op)
+  └── For each page in pagesInventory (skip current):
+        ├── Read page file from dirHandle
+        ├── DOMParser → replace <nav> with currentNavHTML → write back
+        └── lastSyncedNavHTML = currentNavHTML
+```
+
+### 6. Mutation Observer
 
 Tracks content changes for dirty-state management and auto-save triggering.
 
 ```
 bindMutationObserver()
+  ├── Disconnect any existing observer first (safe to call repeatedly, e.g. after undo/redo)
   ├── Observe subtree of <body> for characterData + childList
   ├── Ignore mutations originating from [data-editor-ui] elements
   └── On relevant change → setDirty(true) → scheduleAutoSave()
 ```
 
-### 5. Image Manager
+### 7. Image Manager
 
 Handles image replacement without leaving the browser.
 
 **Flow:**
 
-1. User clicks a `[data-editable-image]` element (hover shows "Click to replace image" overlay)
+1. User clicks an `<img>` element inside a zone (hover shows "Click to replace image" overlay)
 2. Hidden `<input type="file">` triggers file picker
 3. On file select:
    - Read as ArrayBuffer → base64 encode
    - Upload to `assets/` in GitHub repo via API
-   - **If folder is linked:** write file to local `assets/` directory; set `src` to `./assets/filename`
+   - **If folder is linked:** write file to local `assets/`; set `src` to `./assets/filename`
    - **If no folder access:** display via blob URL locally; store `./assets/filename` in `data-webby-src`; serializer resolves on publish/export
-
-**Functions:**
 
 ```
 bindImageHandler(img)
   └── Attach hover overlay + click → file picker → handleImageUpload()
 
 handleImageUpload(file, imgEl)
-  ├── Read as ArrayBuffer
-  ├── base64Encode → github.uploadFile(`assets/${file.name}`)
+  ├── Read as ArrayBuffer → base64Encode → github.uploadFile(`assets/${file.name}`)
   ├── If dirHandle: writeImageToLocalDir(file) → imgEl.src = `./assets/${file.name}`
   └── Else: imgEl.src = blobURL; imgEl.dataset.webbySrc = `./assets/${file.name}`
 ```
 
-### 6. Link Editor
+### 8. Selection Toolbar
 
-Intercepts clicks on `<a>` elements inside `[data-zone]` and shows a popover editor.
+Floating toolbar that appears above selected text inside any `[data-editable]` element.
 
-**Flow:**
+**Buttons:**
 
-1. User clicks any link inside an editable zone
-2. Navigation is prevented; a positioned popover appears near the link
-3. Popover fields:
-   - **Display text** — updates `textContent` live
-   - **URL** — updates `href` live
-   - **Open in new tab** — toggles `target="_blank"` + `rel="noopener noreferrer"`
-   - **Remove link** — unwraps `<a>` leaving plain text
-4. Popover closes on "Done", on click outside, or when a new link is clicked
+| Button | Action |
+|---|---|
+| **B** | `execCommand('bold')` → normalizes `<b>` → `<strong>` |
+| *I* | `execCommand('italic')` → normalizes `<i>` → `<em>` |
+| `</>` | Wrap/unwrap selection in `<code>` |
+| 🔗 | Wrap selection in `<a>` → open link popover |
+
+```
+bindSelectionToolbar()
+  └── Listens for mouseup/keyup; shows toolbar when selection is non-empty inside [data-editable]
+
+showSelectionToolbar(sel)
+  └── Position above selection (flip below if near top of viewport)
+
+hideSelectionToolbar()
+  └── Called on mousedown outside toolbar, Escape key, or after button action
+```
+
+### 9. Link Editor
+
+Intercepts clicks on `<a>` elements inside `[data-zone]` or `<nav>` and shows a popover editor.
+
+**Popover fields:**
+
+- **Display text** — updates `textContent` live
+- **URL** — updates `href` live
+- **Go to link →** — opens the linked URL (shown when URL is non-empty)
+- **Page/section picker** — dropdown grouped by page; current page zones from DOM, other pages' zones loaded async from disk via `dirHandle`
+- **Open in new tab** — toggles `target="_blank"` + `rel="noopener noreferrer"`
+- **Remove link** — unwraps `<a>` leaving plain text
 
 ```
 bindLinkHandlers()
@@ -215,118 +296,141 @@ bindLinkHandlers()
 
 openLinkPopover(link)
   └── Position near link → populate fields → bind live-update handlers
+
+positionPopover(popover, anchor)
+  └── Place below anchor; flip above if insufficient space below; clamp horizontally
 ```
 
-### 7. AI Section Generator
+### 10. Section Reformat
 
-Calls the Google Gemini API to generate a new themed section based on a user description.
+AI-powered layout restructuring for individual sections. Preserves content (text, images, links) while changing structure.
 
-**Flow:**
+```
+promptReformatSection(section)  ← triggered by ⟳ hover button on section
+  └── Modal: describe layout change → on submit → snapshotForUndo() → reformatSection()
 
-1. User hovers between sections → clicks **+ Add Section**
-2. Modal prompts for a description
-3. On submit:
-   - Extract current `<style>` block from document
-   - Extract first `[data-zone]` section as a markup pattern example (editor UI stripped)
-   - Construct prompt and call Gemini API
-   - Parse returned HTML; inject into DOM at the correct position
-   - Activate editing on the new zone
+reformatSection(section, description)
+  ├── buildReformatPrompt() — sends: main style block + section-specific CSS + clean section HTML
+  ├── callGeminiAPI(prompt)
+  ├── parseSectionResponse() — expects <section-css>...</section-css> <section-html>...</section-html>
+  ├── Upsert <style id="__webby-section-{slug}-styles"> for the returned CSS
+  └── section.replaceWith(newSection) → activateZone(newSection)
+```
 
-**Functions:**
+### 11. Nav Editor
+
+AI-powered navigation restructuring. Makes minimal targeted changes; syncs immediately to all other pages.
+
+```
+activateNav()
+  └── Injects ⟳ Reformat Nav hover button; marks nav with data-webby-nav-bound
+
+promptReformatNav(nav) → snapshotForUndo() → reformatNav(nav, description)
+  ├── buildReformatNavPrompt() — sends: style block + existing nav-specific CSS + nav HTML
+  ├── callGeminiAPI(prompt)
+  ├── parseNavResponse() — expects <nav-html>...</nav-html> + optional <nav-css>...</nav-css>
+  │     (AI omits <nav-css> for content-only changes like adding/removing a link)
+  ├── Upsert <style id="__webby-nav-styles"> only if CSS was returned
+  ├── nav.replaceWith(newNav)
+  ├── rerunInlineScripts(newNav)       ← rebinds hamburger toggle listeners on new elements
+  ├── activateNav()
+  └── lastSyncedNavHTML = '' → syncNavToOtherPagesIfChanged()  ← immediate force-sync
+
+addLinkToNav(navEl, label, href)  ← programmatic link insertion (used by page generator)
+  ├── Strategy 1: find all <ul>/<ol> with <li><a> → clone last item per list, update, append
+  └── Strategy 2 (fallback): bare <a> elements → clone last, update, insert after
+```
+
+**Hamburger script pattern** — nav inline scripts should bind to the `<nav>` element (not `document` or `window`) so that listeners are cleaned up when the nav is replaced and re-bound when `rerunInlineScripts` re-executes them:
+```js
+(function() {
+  const nav = document.currentScript.closest('nav');
+  nav.addEventListener('click', function(e) {
+    if (e.target.closest('.hamburger-class')) toggleNav();
+  });
+})();
+```
+
+### 12. Pages Manager
+
+Multi-page site management. Requires folder access (`dirHandle`).
+
+```
+openPagesPanel()  ← toggled by Pages toolbar button
+  ├── Lists all pages from pagesInventory
+  ├── Open → links to ./{page.file}
+  └── ✕ Delete → confirm → snapshotForUndo() → deletePageFromSite(page)
+
+promptAddPage() / generatePage(description, navLabel, filename)
+  ├── snapshotForUndo()
+  ├── buildPagePrompt() — includes: style block, nav-specific CSS, nav HTML (verbatim),
+  │     example section, container wrapper detection
+  ├── callGeminiAPI(prompt)  ← AI generates page; copies nav exactly (link added separately)
+  ├── writePageToLocalFile(filename, html)
+  ├── Register in pagesInventory → savePagesInventory()
+  ├── addLinkToNav(currentNav, navLabel, href)  ← programmatic nav update
+  ├── activateNav()
+  └── lastSyncedNavHTML = '' → syncNavToOtherPagesIfChanged()  ← distributes new link to all pages
+
+deletePageFromSite(page)
+  ├── removePageFromNav(navEl, filename)  ← strip nav links to the deleted page
+  ├── pagesInventory.pages.filter(...)   ← remove from inventory + savePagesInventory()
+  ├── dirHandle.removeEntry(filename)    ← delete local file
+  └── lastSyncedNavHTML = '' → syncNavToOtherPagesIfChanged()  ← sync cleaned nav to all pages
+```
+
+### 13. AI Section Generator
+
+Generates a new themed section and injects it at the chosen position.
 
 ```
 promptAddSection(insertAfterZone)
-  └── Show modal → on submit → generateSection(description, insertAfterZone)
+  └── Modal → on submit → snapshotForUndo() → generateSection(description, insertAfterZone)
 
 generateSection(description, insertAfterZone)
-  ├── buildSectionPrompt(description)
+  ├── buildSectionPrompt() — sends: style block + example zone HTML
   ├── callGeminiAPI(prompt)
-  ├── parseHTMLFromResponse(text)   ← strips markdown fences if present
-  ├── injectNewSection(html, insertAfterZone)
-  └── activateZone(newSection)
-
-buildSectionPrompt(description)
-  ├── Read current <style> block
-  ├── Clone first [data-zone] section (strip editor UI attributes)
-  └── Return assembled prompt string
+  ├── parseSectionResponse() — <section-css> + <section-html>
+  ├── Upsert <style id="__webby-section-{slug}-styles"> for CSS
+  └── injectNewSection(section, insertAfterZone) → activateZone(section)
 ```
 
-**Gemini API call:**
+### 14. Serializer / Exporter
 
-```js
-fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
-  method: "POST",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({
-    contents: [{ parts: [{ text: prompt }] }]
-  })
-})
-// Response: data.candidates[0].content.parts[0].text
-```
-
-**Section prompt template:**
+Produces clean HTML from the current DOM state.
 
 ```
-You are generating a new HTML section for a website.
-
-STYLE CONTEXT (CSS variables and base styles in use):
-<style>
-{currentStyleBlock}
-</style>
-
-EXISTING SECTION EXAMPLE (match this markup style and class patterns exactly):
-{exampleSection}
-
-TASK:
-Generate a single <section> element for the following description:
-"{userDescription}"
-
-RULES:
-- Use only the CSS variables already defined above
-- Match the class naming conventions in the example
-- Include data-zone="{slug}" and data-zone-label="{Human Label}" on the section
-- Add data-editable on all user-editable text elements
-- Add data-editable-image on any img elements; use src="./assets/placeholder.jpg"
-- Return ONLY the raw <section> element, no explanation, no markdown fences
-```
-
-### 8. Serializer / Exporter
-
-Produces clean HTML from the current DOM state. Two modes:
-
-```
-serialize({ local: false })   ← default; for publish/export
-serialize({ local: true })    ← for local file save and localStorage cache
+serialize({ local: false })   ← for publish/export
+serialize({ local: true })    ← for local file save
 
 Both modes:
   ├── Clone document.documentElement
-  ├── Remove all [data-editor-ui] elements (toolbar, modals, add/delete buttons, hints)
+  ├── Remove all [data-editor-ui] elements (toolbar, modals, add/delete/reformat buttons)
   ├── Remove contenteditable + spellcheck attributes
+  ├── Remove data-webby-bound and data-webby-nav-bound attributes
   ├── Resolve img[data-webby-src]: replace blob URL src with stored relative path
-  └── Restore original body padding-top (remove toolbar offset)
+  └── Restore original body padding-top and nav top offset
 
 local: false only:
   └── Remove <script src="./secrets.js"> and <script src="...webby.js"> tags
 
 exportToFile()
-  ├── serialize({ local: false })
-  ├── Trigger download as "index.html"
-  └── clearDraftCache()
+  └── serialize({ local: false }) → trigger download as current page filename
 ```
 
-**Important:** The serializer is idempotent — running it multiple times on the same DOM produces the same output.
+The serializer is idempotent — running it multiple times on the same DOM produces the same output.
 
-### 9. GitHub Publisher
+### 15. GitHub Publisher
 
-Pushes `index.html` and uploaded images to the GitHub repo via REST API. Triggers GitHub Actions deployment automatically on push.
+Pushes all pages and the pages inventory to GitHub via the REST API.
 
 ```
 publishSite()
-  ├── serialize({ local: false })
-  ├── sha = await github.getFileSHA("index.html")
-  ├── await github.putFile("index.html", html, sha)
-  ├── clearDraftCache()
-  └── showStatus("Published ✓ — deploying…")
+  ├── 1. Current page: serialize({ local: false }) → github.putFile(CURRENT_FILENAME, html, sha)
+  ├── 2. All other pages (if dirHandle + pagesInventory):
+  │     For each page: read from disk → DOMParser → strip editor scripts
+  │         → github.putFile(page.file, stripped, sha)
+  └── 3. Inventory: github.putFile('webby-pages.json', JSON, sha)
 
 github.getFileSHA(path)
   └── GET /repos/{repo}/contents/{path}?ref={branch} → return .sha (null if 404)
@@ -336,26 +440,78 @@ github.putFile(path, content, sha)
         body: { message, content: btoa(unescape(encodeURIComponent(content))), sha, branch }
 
 github.uploadFile(path, base64Content)
-  └── getFileSHA(path) → putFile with pre-encoded binary (for images)
+  └── getFileSHA(path) → putFile with pre-encoded binary content (for images)
 ```
 
-### 10. Theme Editor
+SHA conflicts (HTTP 409) are silently swallowed for the current page; other pages with errors are reported in the status message.
 
-Panel that parses CSS custom properties from the `<style>` block and exposes them as live inputs.
+### 16. Undo / Redo
+
+Snapshot-based undo for structural operations. Text edits within `contenteditable` use the browser's native undo (Ctrl+Z). Capped at 20 entries.
 
 ```
-openThemeEditor()   ← toggled by "Theme" toolbar button
-  ├── Parse --variable: value pairs from <style> via regex
-  ├── Group into: Colors / Typography / Spacing / Layout
-  ├── Render color pickers (for hex/rgb/hsl values) or text inputs
-  └── On input: document.documentElement.style.setProperty() + patch <style> textContent
+snapshotForUndo()  ← called before: section delete, section reformat, nav reformat,
+                      generate section, generate page, delete page
+  └── captureSnapshot() → undoStack.push(); redoStack = []; updateUndoRedoButtons()
+
+captureSnapshot()
+  ├── Clone body — strip [data-editor-ui], contenteditable, spellcheck, binding attrs
+  ├── Capture main <style> textContent
+  ├── Capture all <style id="__webby-section-*"> elements
+  └── Capture <style id="__webby-nav-styles"> if present
+
+restoreSnapshot(snapshot)
+  ├── Disconnect mutation observer
+  ├── closeLinkPopover() + hideSelectionToolbar()
+  ├── Save [data-editor-ui] child elements from body
+  ├── document.body.innerHTML = snapshot.bodyHTML
+  ├── Re-attach saved editor UI elements
+  ├── Restore main style block + all section/nav style blocks
+  ├── activateZones() + activateNav()
+  ├── rerunInlineScripts(nav)   ← rebinds hamburger toggle after DOM replacement
+  ├── bindMutationObserver()    ← restart observer (was disconnected)
+  └── lastSyncedNavHTML = getNavHTML()
+
+undo()  → redoStack.push(captureSnapshot()) → restoreSnapshot(undoStack.pop())
+redo()  → undoStack.push(captureSnapshot()) → restoreSnapshot(redoStack.pop())
+
+bindUndoRedo()
+  └── Ctrl+Z → undo(); Ctrl+Shift+Z / Ctrl+Y → redo()
+      (skips when e.target.isContentEditable — browser handles text undo there)
+```
+
+### 17. Theme Editor
+
+Panel that exposes CSS custom properties and site identity fields as live inputs.
+
+```
+openThemeEditor()  ← toggled by Theme toolbar button; mutually exclusive with Pages panel
+  ├── Site Identity section:
+  │     ├── Favicon picker → convertImageToPng() → github.uploadFile() + local write
+  │     ├── Page title input → document.title + <title> element
+  │     ├── Meta description textarea → <meta name="description">
+  │     └── Keywords input → <meta name="keywords">
+  └── CSS Variables section (grouped: Colors / Typography / Spacing / Layout):
+        ├── Color variables → color picker + hex input
+        ├── Other variables → text input
+        ├── "Add font variable" inline form (Typography group only)
+        └── On input: document.documentElement.style.setProperty() + patch <style> textContent
+```
+
+### 18. DOM Helpers
+
+```
+rerunInlineScripts(el)
+  └── For each inline <script> in el: replace with a fresh <script> element to force execution.
+      Used after nav replacement (reformatNav, restoreSnapshot) to rebind hamburger listeners.
+      Scripts parsed via innerHTML/replaceWith are inert — the browser does not run them.
 ```
 
 ---
 
 ## CSS Variable System
 
-The base `<style>` block in `index.html` must define CSS custom properties so AI-generated sections can use them consistently.
+The base `<style>` block in each page must define CSS custom properties so AI-generated sections and pages can use them consistently.
 
 **Required variables (minimum set):**
 
@@ -386,6 +542,10 @@ The base `<style>` block in `index.html` must define CSS custom properties so AI
 }
 ```
 
+Additional style blocks used by Webby at runtime:
+- `<style id="__webby-nav-styles">` — nav-specific CSS written by Reformat Nav
+- `<style id="__webby-section-{slug}-styles">` — per-section CSS written by section Reformat / Add Section
+
 ---
 
 ## Secrets & Security Notes
@@ -399,22 +559,21 @@ The base `<style>` block in `index.html` must define CSS custom properties so AI
 
 ## Browser Compatibility
 
-Webby requires the [File System Access API](https://developer.mozilla.org/en-US/docs/Web/API/File_System_Access_API) to read and write local files.
+Webby requires the [File System Access API](https://developer.mozilla.org/en-US/docs/Web/API/File_System_Access_API).
 
 | Browser | Supported |
 |---|---|
 | Chrome 86+ | ✓ |
 | Edge 86+ | ✓ |
-| Safari 15.2+ | ✓ |
+| Safari | ✗ |
 | Firefox | ✗ |
 
-Opening a page in an unsupported browser shows a blocking message and prevents the editor from loading. Chrome or Edge are recommended for the most reliable experience.
+Opening a page in an unsupported browser shows a blocking modal and prevents the editor from loading entirely.
 
 ---
 
 ## Non-Goals (explicitly out of scope)
 
 - Multi-user editing or auth
-- Rich text formatting toolbar (bold, italic, etc.) — plain `contenteditable` only
 - Version history UI (git history serves this purpose)
 - Any server-side component

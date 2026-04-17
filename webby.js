@@ -29,8 +29,8 @@
   let undoStack = [];
   let redoStack = [];
 
-  // Webby requires the File System Access API (Chrome, Edge, Safari 15.2+).
-  // Firefox and other browsers that lack showDirectoryPicker are not supported.
+  // Webby requires the File System Access API. Only Chromium-based browsers
+  // (Chrome, Edge) are supported. Safari and Firefox are not supported.
   if (!('showDirectoryPicker' in window)) {
     const msg = document.createElement('div');
     Object.assign(msg.style, {
@@ -44,8 +44,8 @@
         <h2 style="margin:0 0 10px;font-size:17px;color:#111;">Unsupported Browser</h2>
         <p style="margin:0 0 20px;font-size:14px;color:#555;line-height:1.6;">
           Webby requires access to the local file system and works in
-          <strong>Chrome</strong>, <strong>Edge</strong>, or <strong>Safari</strong> (15.2+).<br><br>
-          Please open this page in one of those browsers to use the editor.
+          <strong>Chrome</strong> and <strong>Edge</strong>.<br><br>
+          Please open this page in Chrome or Edge to use the editor.
         </p>
       </div>`;
     document.body.appendChild(msg);
@@ -185,7 +185,7 @@
 
   // ─── File persistence ─────────────────────────────────────────────────────
   //
-  // File System Access API (Chrome, Edge, Safari 15.2+):
+  // File System Access API (Chrome, Edge):
   //   - User selects their site folder once; handle is stored in IndexedDB.
   //   - Auto-save writes the current page to disk; images are saved to assets/.
   //   - On reload the file on disk is always current — nothing to restore.

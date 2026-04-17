@@ -280,17 +280,26 @@ No explanation, no markdown fences around file contents, no preamble.
    };
    ```
 
-3. **Open any page in Chrome, Edge, or Safari 15.2+** — edit mode activates automatically. Firefox is not supported.
+3. **Open any page in Chrome or Edge** — edit mode activates automatically. Safari and Firefox are not supported.
 
-4. **Link your site folder** — a banner will appear below the toolbar. Click **Select Folder** and choose the folder containing your HTML files. Once linked, every edit saves automatically, and nav changes sync across all pages.
+4. **Link your site folder** — a banner will appear below the toolbar. Click **Select Folder** and choose the folder containing your HTML files. Once linked, every edit saves automatically and nav changes sync across all pages.
 
-5. Replace placeholder text by clicking and typing directly on the page.
+5. Replace placeholder text by clicking and typing directly on the page. Select text to get a formatting toolbar (bold, italic, code, link).
 
 6. Replace placeholder images by clicking on any image.
 
-7. Use the **Pages** toolbar button to see all pages, navigate between them, or add new pages with AI.
+7. Use the toolbar to access all editing features:
+   - **↩ / ↪** — Undo and redo structural changes (AI actions, deletions)
+   - **Pages** — See all pages, navigate between them, add new AI-generated pages, or delete pages
+   - **Theme** — Adjust colours, fonts, spacing, favicon, page title, and meta description live
+   - **Export** — Download a clean copy of the current page (no editor code)
+   - **Publish** — Push all pages to GitHub and deploy
 
-8. Click **Publish** when ready — all pages are published together.
+8. Hover over any section to reveal the **⟳ Reformat** button (change layout with AI while keeping content) and the **✕ Delete Section** button.
+
+9. Hover the navigation bar to reveal **⟳ Reformat Nav** — restructure it with AI; changes sync to all pages automatically.
+
+10. Click **Publish** when ready — all pages and the page inventory are published together.
 
 ---
 
@@ -302,7 +311,7 @@ No explanation, no markdown fences around file contents, no preamble.
 
 **Sections:** It's easier to delete a section you don't need than to add a new one. Start with more than less.
 
-**Multi-page nav links:** The generated nav uses `./page.html` relative paths. Smooth-scroll anchor links within a page use `./index.html#section-id` so they work correctly whether you're on the home page or another page.
+**Undo is your safety net:** Before any AI action (Reformat, Add Section, Add Page), a snapshot is taken automatically. If the result isn't right, click ↩ to go back instantly — no need to reload.
 
 **Placeholder content:** Ask Claude to write realistic placeholder copy for your specific profession. Generic lorem ipsum leads to a generic layout.
 
