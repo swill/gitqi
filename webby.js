@@ -1000,33 +1000,36 @@ RULES:
     clone.querySelectorAll('[data-editor-ui]').forEach(el => el.remove());
     clone.removeAttribute('data-webby-nav-bound');
 
-    return `You are rewriting the navigation for a website — both its HTML structure and all its CSS.
+    return `You are making a targeted change to an existing website navigation element.
 
-CSS VARIABLES IN USE (use these, never hardcode colours or sizes):
+CSS VARIABLES IN USE (use these if any style changes are needed — never hardcode colours or sizes):
 ${styleBlock}
-
-${existingNavCSS ? `EXISTING NAV-SPECIFIC CSS (currently in a separate style block):\n${existingNavCSS}\n` : ''}
+${existingNavCSS ? `
+EXISTING NAV-SPECIFIC CSS (this is the live CSS currently driving the nav):
+${existingNavCSS}
+` : ''}
 EXISTING NAV HTML:
 ${clone.outerHTML}
 
-REFORMAT INSTRUCTION:
+CHANGE INSTRUCTION:
 "${description}"
 
 RULES:
-- Preserve ALL existing link text and hrefs exactly unless explicitly told to change them
-- You may change class names, structure, layout, JS toggle logic, and all CSS freely
-- Use only the CSS variables defined above — no hardcoded colours or font sizes
-- The mobile hamburger menu MUST: use position fixed or absolute so it is never clipped, have a solid background so page content is covered, have a high z-index (9000+), and close when a link is clicked or the window is resized to desktop width
-- Use a CSS class toggle driven by a small inline <script> at the bottom of the nav if JS is needed — keep it minimal and self-contained within the nav element
-- Return your response in EXACTLY this format with no other text:
-
-<nav-css>
-/* all CSS needed for the nav, including media queries */
-</nav-css>
+- Make ONLY the changes required by the instruction — leave everything else exactly as-is
+- Preserve ALL existing JavaScript, event handlers, and inline <script> elements unless explicitly told to change them
+- Preserve ALL existing CSS classes, IDs, data attributes, and aria attributes unless directly involved in the change
+- Preserve ALL mobile responsive behaviour, hamburger menu functionality, and CSS media queries unless explicitly told to change them
+- If the instruction only involves adding, removing, or renaming links: modify ONLY those elements in the HTML — make no CSS changes and return no <nav-css> block
+- If CSS changes ARE required: use only the CSS variables defined above, keep the hamburger menu working (position fixed/absolute, solid background, z-index 9000+, closes on link click and desktop resize), use an inline <script> for any JS toggle logic
+- Return your response in EXACTLY this format — include <nav-css> ONLY if CSS actually needs to change:
 
 <nav-html>
 <nav>...</nav>
-</nav-html>`;
+</nav-html>
+
+<nav-css>
+/* include this block ONLY if CSS changes are needed; omit entirely for link-only changes */
+</nav-css>`;
   }
 
   function injectAddSectionButtons() {
@@ -1410,11 +1413,8 @@ RULES:
 
     if (!html || !html.toLowerCase().includes('<html')) throw new Error('AI returned invalid HTML.');
 
-    // Parse the generated page to extract the updated nav
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    const generatedNav = doc.querySelector('nav');
-
     // Write the new page file to disk
+    const doc = new DOMParser().parseFromString(html, 'text/html');
     await writePageToLocalFile(filename, html);
 
     // Register in inventory
@@ -1422,34 +1422,71 @@ RULES:
     pagesInventory.pages.push({ file: filename, title: pageTitle, navLabel });
     await savePagesInventory();
 
-    // Update the current page's nav in the DOM with the new nav (which now includes the new page)
-    if (generatedNav) {
-      const currentNav = document.querySelector('nav');
-      if (currentNav) {
-        delete generatedNav.dataset.webbyNavBound;
-        currentNav.replaceWith(generatedNav);
-        // Re-apply toolbar offset if the new nav is fixed
-        if (getComputedStyle(generatedNav).position === 'fixed') {
-          const navTop = parseFloat(getComputedStyle(generatedNav).top) || 0;
-          if (navTop < 44) {
-            generatedNav.style.top = '44px';
-            originalNavTop = originalNavTop !== null ? originalNavTop : '';
-          }
-        }
-        activateNav();
-      }
+    // Add the new page link to the current nav programmatically — avoids relying on the AI
+    // to correctly preserve hamburger menus, mobile styles, and inline scripts.
+    const currentNav = document.querySelector('nav');
+    if (currentNav) {
+      addLinkToNav(currentNav, navLabel, './' + filename);
+      // Re-activate so the reformat button is re-bound to the updated nav
+      delete currentNav.dataset.webbyNavBound;
+      activateNav();
     }
 
-    // Force re-sync: push the new nav to all other local pages (including the new file)
+    // Force re-sync: push the updated nav (with new link) to all pages including the new file
     lastSyncedNavHTML = '';
     await syncNavToOtherPagesIfChanged();
 
     setDirty(true);
   }
 
+  // Programmatically insert a new nav link into an existing <nav> element.
+  // Handles both list-based navs (<ul>/<ol> with <li><a>) and flat navs (<a> directly).
+  // If the nav has multiple link lists (e.g. desktop + mobile copy), updates all of them.
+  function addLinkToNav(navEl, label, href) {
+    let added = false;
+
+    // Strategy 1: list-based nav — add to every <ul>/<ol> that contains page links
+    navEl.querySelectorAll('ul, ol').forEach(list => {
+      const items = list.querySelectorAll('li');
+      if (!items.length) return;
+      const lastItem = items[items.length - 1];
+      const anchor   = lastItem.querySelector('a');
+      if (!anchor) return;
+
+      const newItem = lastItem.cloneNode(true);
+      const newA    = newItem.querySelector('a');
+      if (!newA) return;
+      newA.setAttribute('href', href);
+      newA.textContent = label;
+      // Strip active/current state classes that belong to other pages
+      newA.classList.remove('active', 'current', 'is-active', 'is-current', 'selected');
+      list.appendChild(newItem);
+      added = true;
+    });
+
+    if (added) return true;
+
+    // Strategy 2: flat nav — bare <a> elements (skip logo links that contain an <img>)
+    const anchors = Array.from(navEl.querySelectorAll('a[href]'))
+      .filter(a => !a.querySelector('img'));
+    if (!anchors.length) return false;
+
+    const last = anchors[anchors.length - 1];
+    const newA  = last.cloneNode(true);
+    newA.setAttribute('href', href);
+    newA.textContent = label;
+    newA.classList.remove('active', 'current', 'is-active', 'is-current', 'selected');
+    last.after(newA);
+    return true;
+  }
+
   function buildPagePrompt(description, navLabel, filename) {
     const styleEl    = document.querySelector('style');
     const styleBlock = styleEl ? styleEl.textContent : '';
+
+    // Include nav-specific CSS if present — hamburger styles often live here after a reformat
+    const navStyleEl = document.getElementById('__webby-nav-styles');
+    const navCSS     = navStyleEl ? navStyleEl.textContent.trim() : '';
 
     const nav = document.querySelector('nav');
     let navHTML = '';
@@ -1507,9 +1544,12 @@ NEW PAGE: "${navLabel}" → ${filename}
 CSS VARIABLES AND BASE STYLES (copy this <style> block into the new page verbatim):
 ${styleBlock}
 
-CURRENT NAVIGATION (update to include the new page link, then use the updated nav in the new page):
+CURRENT NAVIGATION (copy this EXACTLY as-is — do not add, remove, or change anything; the new page link will be inserted automatically after generation):
 ${navHTML}
-
+${navCSS ? `
+CURRENT NAVIGATION CSS (copy this verbatim into a <style id="__webby-nav-styles"> block in <head>, immediately after the main <style> block — do not modify it):
+${navCSS}
+` : ''}
 EXAMPLE SECTION (match this markup style, class patterns, and data-* attributes exactly):
 ${exampleHTML}
 ${containerInstruction}
@@ -1519,12 +1559,12 @@ PAGE DESCRIPTION:
 REQUIREMENTS:
 1. Return a complete, valid HTML document starting with <!DOCTYPE html>
 2. Copy the <style> block and any Google Fonts <link> from above into the new page's <head>
-3. Add a link to the new page (./${filename}) with nav label "${navLabel}" into the navigation, keeping all existing links
-4. Use the same nav structure (classes, mobile hamburger logic) as the current nav
+3. Copy the nav HTML exactly as shown — do not modify it in any way (the new page link is handled separately)
+4. If CURRENT NAVIGATION CSS is provided above, copy it verbatim into a <style id="__webby-nav-styles"> block in <head>, immediately after the main <style> block
 5. Every <section> must have: data-zone="{slug}" and data-zone-label="{Human Label}"
 6. Every editable text element must have: data-editable
 7. Every <img> must have: data-editable-image and src="./assets/placeholder.jpg"
-8. Include immediately after the <style> block in <head>:
+8. Include immediately after the <style> block (and nav CSS block if present) in <head>:
    <script src="./secrets.js"></script>
    <script src="https://swill.github.io/webby/webby.js"></script>
 9. Set an appropriate <title> and <meta name="description"> for this page
