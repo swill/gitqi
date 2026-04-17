@@ -481,9 +481,10 @@
       img.dataset.webbyBound = '1';
       bindImageHandler(img);
     });
+    // Ensure the section has an id matching its zone slug so anchor links work when deployed
+    if (section.dataset.zone && !section.id) section.id = section.dataset.zone;
     injectDeleteButton(section);
     injectReformatButton(section);
-    injectAnchorButton(section);
   }
 
   function deactivateZones() {
@@ -492,79 +493,6 @@
       node.removeAttribute('spellcheck');
     });
     document.querySelectorAll('[data-editor-ui]').forEach(el => el.remove());
-  }
-
-  function injectAnchorButton(section) {
-    const slug = section.dataset.zone;
-    if (!slug) return;
-
-    // Ensure the section has a matching id so the anchor works when deployed
-    if (!section.id) section.id = slug;
-
-    const btn = el('button', { 'data-editor-ui': '' });
-    btn.textContent = '#';
-    css(btn, {
-      position: 'absolute',
-      top: '70px',
-      left: '10px',
-      transform: 'translateY(-50%)',
-      zIndex: '1000',
-      padding: '0',
-      background: 'transparent',
-      color: 'rgb(185,185,185)',
-      border: 'none',
-      cursor: 'pointer',
-      fontSize: '50px',
-      fontWeight: '300',
-      fontFamily: 'Georgia, "Times New Roman", serif',
-      lineHeight: '24px',
-      textAlign: 'center',
-      opacity: '0',
-      transition: 'opacity 0.15s',
-      pointerEvents: 'none',
-    });
-
-    // Tooltip
-    const tip = el('span', { 'data-editor-ui': '' });
-    tip.textContent = 'Link Copied!';
-    css(tip, {
-      position: 'absolute',
-      top: '50%',
-      left: '28px',
-      transform: 'translateY(-50%)',
-      background: 'rgba(30,30,50,0.85)',
-      color: '#fff',
-      fontSize: '10px',
-      padding: '2px 7px',
-      borderRadius: '4px',
-      whiteSpace: 'nowrap',
-      opacity: '0',
-      transition: 'opacity 0.15s',
-      pointerEvents: 'none',
-    });
-    btn.appendChild(tip);
-
-    section.addEventListener('mouseenter', () => {
-      btn.style.opacity = '1';
-      btn.style.pointerEvents = 'auto';
-    });
-    section.addEventListener('mouseleave', () => {
-      btn.style.opacity = '0';
-      btn.style.pointerEvents = 'none';
-    });
-
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      navigator.clipboard.writeText('#' + section.id).then(() => {
-        tip.style.opacity = '1';
-        setTimeout(() => { tip.style.opacity = '0'; }, 1500);
-      });
-    });
-
-    if (getComputedStyle(section).position === 'static') {
-      section.style.position = 'relative';
-    }
-    section.appendChild(btn);
   }
 
   function injectDeleteButton(section) {
