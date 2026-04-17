@@ -970,6 +970,12 @@ RULES:
     }
 
     activateNav();
+
+    // Force immediate sync to other pages — don't rely on the auto-save timer
+    // for a deliberate nav change (same pattern as generatePage / deletePageFromSite).
+    lastSyncedNavHTML = '';
+    await syncNavToOtherPagesIfChanged();
+
     setDirty(true);
   }
 
