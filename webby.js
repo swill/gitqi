@@ -3276,10 +3276,12 @@ RULES:
         display: 'flex', alignItems: 'center', justifyContent: 'center',
       });
       customBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`;
+      // Defer the re-render past this event tick — otherwise flyout.innerHTML = ''
+      // detaches customBtn during mousedown, and the subsequent mouseup (target now
+      // outside the toolbar) triggers onSelectionChange and rebuilds the toolbar.
       customBtn.addEventListener('mousedown', e => {
         e.preventDefault();
-        renderCustom();
-        repositionSelectionToolbar();
+        setTimeout(() => { renderCustom(); repositionSelectionToolbar(); }, 0);
       });
       grid.appendChild(customBtn);
 
@@ -3403,8 +3405,7 @@ RULES:
       applyBtn.addEventListener('mousedown', e => { e.preventDefault(); tryApply(); });
       backBtn.addEventListener('mousedown', e => {
         e.preventDefault();
-        renderSwatches();
-        repositionSelectionToolbar();
+        setTimeout(() => { renderSwatches(); repositionSelectionToolbar(); }, 0);
       });
 
       panel.append(pickerRow, hexRow, btnRow);
