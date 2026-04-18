@@ -3006,6 +3006,7 @@ RULES:
       hideSelectionToolbar();
     });
     css(boldBtn, { fontWeight: '700', fontFamily: 'Georgia, serif' });
+    boldBtn.title = 'Bold';
 
     const italicBtn = makeSelBtn('I', italicActive, () => {
       const anchor = window.getSelection()?.anchorNode;
@@ -3015,6 +3016,7 @@ RULES:
       hideSelectionToolbar();
     });
     css(italicBtn, { fontStyle: 'italic', fontFamily: 'Georgia, serif' });
+    italicBtn.title = 'Italic';
 
     const codeRangeNode = (() => {
       try { const n = sel.getRangeAt(0).commonAncestorContainer; return n.nodeType === Node.TEXT_NODE ? n.parentElement : n; } catch (_) { return null; }
@@ -3052,6 +3054,7 @@ RULES:
       hideSelectionToolbar();
     });
     codeBtn.innerHTML = CODE_SVG;
+    codeBtn.title = 'Inline code';
 
     const LINK_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`;
     const linkBtn = makeSelBtn('', false, () => {
@@ -3075,6 +3078,7 @@ RULES:
       }
     });
     linkBtn.innerHTML = LINK_SVG;
+    linkBtn.title = 'Link';
 
     // Color button — opens a flyout with theme colors and a custom picker
     const COLOR_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 5 12a7 7 0 1 0 14 0z"/></svg>`;
@@ -3172,129 +3176,242 @@ RULES:
     setDirty(true);
   }
 
+  // Remove an inline style (e.g. color) from every span within the selection.
+  // Unwraps spans that end up with no remaining attributes.
+  function clearInlineStyleFromSelection(property) {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+    const r = sel.getRangeAt(0);
+    const anchor = sel.anchorNode;
+    const editable = anchor &&
+      (anchor.nodeType === Node.TEXT_NODE ? anchor.parentElement : anchor).closest('[data-editable]');
+    if (!editable) return;
+
+    const candidates = new Set();
+    editable.querySelectorAll('span').forEach(s => {
+      if (r.intersectsNode(s)) candidates.add(s);
+    });
+    // Include span ancestors of the range endpoints — they enclose the selection
+    // but wouldn't be caught by intersectsNode scan of descendants.
+    const walkUp = node => {
+      let n = node && (node.nodeType === Node.TEXT_NODE ? node.parentElement : node);
+      while (n && n !== editable) {
+        if (n.tagName === 'SPAN') candidates.add(n);
+        n = n.parentElement;
+      }
+    };
+    walkUp(r.startContainer);
+    walkUp(r.endContainer);
+
+    let changed = false;
+    candidates.forEach(span => {
+      if (!span.style[property]) return;
+      span.style[property] = '';
+      changed = true;
+      const styleAttr = span.getAttribute('style');
+      if (!styleAttr || !styleAttr.trim()) {
+        span.removeAttribute('style');
+        if (span.attributes.length === 0) {
+          const parent = span.parentNode;
+          while (span.firstChild) parent.insertBefore(span.firstChild, span);
+          span.remove();
+        }
+      }
+    });
+
+    if (changed) setDirty(true);
+  }
+
   function populateColorFlyout(flyout, savedRange) {
-    const grid = el('div');
-    css(grid, { display: 'flex', flexWrap: 'wrap', gap: '5px', maxWidth: '220px' });
+    const renderSwatches = () => {
+      flyout.innerHTML = '';
+      const grid = el('div');
+      css(grid, { display: 'flex', flexWrap: 'wrap', gap: '5px', maxWidth: '220px' });
 
-    const colors = getThemeVars('--color');
-    if (!colors.length) {
-      const empty = el('div');
-      empty.textContent = 'No theme colors defined';
-      css(empty, { color: '#94a3b8', fontSize: '11px', padding: '2px 4px' });
-      flyout.appendChild(empty);
-      return;
-    }
-
-    colors.forEach(([varName, varValue]) => {
-      const swatch = el('button', { 'data-editor-ui': '', title: varName.replace(/^--/, '') });
-      css(swatch, {
-        width: '22px',
-        height: '22px',
-        padding: '0',
-        border: '1px solid rgba(255,255,255,0.25)',
-        borderRadius: '4px',
-        cursor: 'pointer',
-        background: varValue,
+      const colors = getThemeVars('--color');
+      colors.forEach(([varName, varValue]) => {
+        const swatch = el('button', { 'data-editor-ui': '' });
+        swatch.title = varName.replace(/^--/, '');
+        css(swatch, {
+          width: '22px', height: '22px', padding: '0',
+          border: '1px solid rgba(255,255,255,0.25)',
+          borderRadius: '4px', cursor: 'pointer', background: varValue,
+        });
+        swatch.addEventListener('mousedown', e => {
+          e.preventDefault();
+          restoreSavedRange(savedRange);
+          wrapSelectionInStyledSpan('color', `var(${varName})`);
+          hideSelectionToolbar();
+        });
+        grid.appendChild(swatch);
       });
-      swatch.addEventListener('mousedown', e => {
+
+      // Clear — remove any color styling from the selected text
+      const clearBtn = el('button', { 'data-editor-ui': '' });
+      clearBtn.title = 'Remove text color';
+      css(clearBtn, {
+        width: '22px', height: '22px', padding: '0',
+        border: '1px solid rgba(255,255,255,0.25)',
+        borderRadius: '4px', cursor: 'pointer',
+        background: 'rgba(255,255,255,0.05)', color: '#e8e8f0',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      });
+      clearBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 19 19 5"/></svg>`;
+      clearBtn.addEventListener('mousedown', e => {
         e.preventDefault();
         restoreSavedRange(savedRange);
-        wrapSelectionInStyledSpan('color', `var(${varName})`);
+        clearInlineStyleFromSelection('color');
         hideSelectionToolbar();
       });
-      grid.appendChild(swatch);
-    });
+      grid.appendChild(clearBtn);
 
-    // Custom color — native picker wrapped in a label so the click opens it
-    const customWrap = el('label', { 'data-editor-ui': '', title: 'Custom color' });
-    css(customWrap, {
-      width: '22px',
-      height: '22px',
-      border: '1px dashed rgba(255,255,255,0.4)',
-      borderRadius: '4px',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      cursor: 'pointer',
-      position: 'relative',
-      overflow: 'hidden',
-    });
-    customWrap.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`;
+      // Custom — opens an inline editor with native picker + hex input
+      const customBtn = el('button', { 'data-editor-ui': '' });
+      customBtn.title = 'Custom color (picker or hex)';
+      css(customBtn, {
+        width: '22px', height: '22px', padding: '0',
+        border: '1px dashed rgba(255,255,255,0.4)',
+        borderRadius: '4px', cursor: 'pointer',
+        background: 'transparent', color: '#fff',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      });
+      customBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`;
+      customBtn.addEventListener('mousedown', e => {
+        e.preventDefault();
+        renderCustom();
+        repositionSelectionToolbar();
+      });
+      grid.appendChild(customBtn);
 
-    const colorInput = el('input', { 'data-editor-ui': '' });
-    colorInput.type = 'color';
-    css(colorInput, {
-      position: 'absolute', inset: '0', opacity: '0', cursor: 'pointer', border: 'none', padding: '0',
-    });
-    colorInput.addEventListener('change', () => {
-      restoreSavedRange(savedRange);
-      wrapSelectionInStyledSpan('color', colorInput.value);
-      hideSelectionToolbar();
-    });
-    customWrap.appendChild(colorInput);
-    grid.appendChild(customWrap);
+      flyout.appendChild(grid);
 
-    flyout.appendChild(grid);
-
-    // Hex input — accepts pasted or typed hex codes (#abc, #aabbcc, #aabbccdd)
-    const hexRow = el('div');
-    css(hexRow, { display: 'flex', alignItems: 'center', gap: '4px', marginTop: '6px' });
-
-    const hexInput = el('input', { 'data-editor-ui': '' });
-    hexInput.type = 'text';
-    hexInput.placeholder = '#hex';
-    hexInput.spellcheck = false;
-    css(hexInput, {
-      flex: '1',
-      minWidth: '0',
-      padding: '3px 6px',
-      background: 'rgba(255,255,255,0.08)',
-      border: '1px solid rgba(255,255,255,0.18)',
-      borderRadius: '4px',
-      color: '#e8e8f0',
-      fontFamily: 'monospace',
-      fontSize: '11px',
-      outline: 'none',
-    });
-
-    const applyBtn = el('button', { 'data-editor-ui': '' });
-    applyBtn.textContent = 'Apply';
-    css(applyBtn, {
-      padding: '3px 9px',
-      background: '#3b82f6',
-      border: 'none',
-      borderRadius: '4px',
-      color: '#fff',
-      fontSize: '11px',
-      fontFamily: 'inherit',
-      cursor: 'pointer',
-      flexShrink: '0',
-    });
-
-    const tryApplyHex = () => {
-      let val = hexInput.value.trim();
-      if (!val) return;
-      if (val[0] !== '#') val = '#' + val;
-      if (!/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(val)) {
-        hexInput.style.borderColor = '#ef4444';
-        return;
+      if (!colors.length) {
+        const hint = el('div');
+        hint.textContent = 'No theme colors — use custom';
+        css(hint, { color: '#94a3b8', fontSize: '11px', padding: '4px 2px 0' });
+        flyout.appendChild(hint);
       }
-      restoreSavedRange(savedRange);
-      wrapSelectionInStyledSpan('color', val);
-      hideSelectionToolbar();
     };
 
-    hexInput.addEventListener('input', () => { hexInput.style.borderColor = 'rgba(255,255,255,0.18)'; });
-    // mousedown+preventDefault keeps the document listener from tearing down the
-    // selection/toolbar when the user clicks the input to paste.
-    hexInput.addEventListener('mousedown', e => e.stopPropagation());
-    hexInput.addEventListener('keydown', e => {
-      if (e.key === 'Enter') { e.preventDefault(); tryApplyHex(); }
-    });
-    applyBtn.addEventListener('mousedown', e => { e.preventDefault(); tryApplyHex(); });
+    const renderCustom = () => {
+      flyout.innerHTML = '';
+      const panel = el('div');
+      css(panel, { display: 'flex', flexDirection: 'column', gap: '6px', width: '220px' });
 
-    hexRow.append(hexInput, applyBtn);
-    flyout.appendChild(hexRow);
+      const inputRowStyle = { display: 'flex', alignItems: 'center', gap: '6px' };
+      const labelStyle = { fontSize: '11px', color: '#cbd5e1', width: '30px', flexShrink: '0' };
+
+      // Native picker row
+      const pickerRow = el('div');
+      css(pickerRow, inputRowStyle);
+      const pickerLabel = el('span');
+      pickerLabel.textContent = 'Pick';
+      css(pickerLabel, labelStyle);
+      const colorInput = el('input', { 'data-editor-ui': '' });
+      colorInput.type = 'color';
+      colorInput.value = '#3b82f6';
+      colorInput.title = 'Open color picker';
+      css(colorInput, {
+        width: '40px', height: '26px', padding: '2px',
+        background: 'transparent',
+        border: '1px solid rgba(255,255,255,0.2)',
+        borderRadius: '4px', cursor: 'pointer',
+      });
+      pickerRow.append(pickerLabel, colorInput);
+
+      // Hex input row
+      const hexRow = el('div');
+      css(hexRow, inputRowStyle);
+      const hexLabel = el('span');
+      hexLabel.textContent = 'Hex';
+      css(hexLabel, labelStyle);
+      const hexInput = el('input', { 'data-editor-ui': '' });
+      hexInput.type = 'text';
+      hexInput.placeholder = '#aabbcc';
+      hexInput.spellcheck = false;
+      hexInput.value = colorInput.value;
+      hexInput.title = 'Paste or type a hex code';
+      css(hexInput, {
+        flex: '1', minWidth: '0',
+        padding: '3px 6px',
+        background: 'rgba(255,255,255,0.08)',
+        border: '1px solid rgba(255,255,255,0.18)',
+        borderRadius: '4px',
+        color: '#e8e8f0',
+        fontFamily: 'monospace', fontSize: '11px',
+        outline: 'none',
+      });
+      hexRow.append(hexLabel, hexInput);
+
+      // Button row
+      const btnRow = el('div');
+      css(btnRow, { display: 'flex', justifyContent: 'space-between', gap: '6px', marginTop: '2px' });
+      const backBtn = el('button', { 'data-editor-ui': '' });
+      backBtn.textContent = '← Theme';
+      backBtn.title = 'Back to theme colors';
+      css(backBtn, {
+        padding: '3px 9px',
+        background: 'transparent',
+        border: '1px solid rgba(255,255,255,0.2)',
+        borderRadius: '4px', color: '#e8e8f0',
+        fontSize: '11px', fontFamily: 'inherit',
+        cursor: 'pointer',
+      });
+      const applyBtn = el('button', { 'data-editor-ui': '' });
+      applyBtn.textContent = 'Apply';
+      applyBtn.title = 'Apply this color to the selection';
+      css(applyBtn, {
+        padding: '3px 12px',
+        background: '#3b82f6', border: 'none',
+        borderRadius: '4px', color: '#fff',
+        fontSize: '11px', fontFamily: 'inherit',
+        cursor: 'pointer',
+      });
+      btnRow.append(backBtn, applyBtn);
+
+      // Sync picker → hex, and hex → picker (when valid 6-digit hex)
+      colorInput.addEventListener('input', () => {
+        hexInput.value = colorInput.value;
+        hexInput.style.borderColor = 'rgba(255,255,255,0.18)';
+      });
+      hexInput.addEventListener('input', () => {
+        hexInput.style.borderColor = 'rgba(255,255,255,0.18)';
+        let v = hexInput.value.trim();
+        if (v && v[0] !== '#') v = '#' + v;
+        if (/^#[0-9a-f]{6}$/i.test(v)) colorInput.value = v;
+      });
+      // stopPropagation prevents the document-level mousedown from hiding the
+      // toolbar/flyout when the user clicks into the hex field to paste.
+      hexInput.addEventListener('mousedown', e => e.stopPropagation());
+
+      const tryApply = () => {
+        let val = hexInput.value.trim();
+        if (!val) val = colorInput.value;
+        if (val[0] !== '#') val = '#' + val;
+        if (!/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(val)) {
+          hexInput.style.borderColor = '#ef4444';
+          return;
+        }
+        restoreSavedRange(savedRange);
+        wrapSelectionInStyledSpan('color', val);
+        hideSelectionToolbar();
+      };
+
+      hexInput.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); tryApply(); }
+      });
+      applyBtn.addEventListener('mousedown', e => { e.preventDefault(); tryApply(); });
+      backBtn.addEventListener('mousedown', e => {
+        e.preventDefault();
+        renderSwatches();
+        repositionSelectionToolbar();
+      });
+
+      panel.append(pickerRow, hexRow, btnRow);
+      flyout.appendChild(panel);
+    };
+
+    renderSwatches();
   }
 
   function populateFontFlyout(flyout, savedRange) {
