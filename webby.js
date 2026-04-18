@@ -3235,6 +3235,66 @@ RULES:
     grid.appendChild(customWrap);
 
     flyout.appendChild(grid);
+
+    // Hex input — accepts pasted or typed hex codes (#abc, #aabbcc, #aabbccdd)
+    const hexRow = el('div');
+    css(hexRow, { display: 'flex', alignItems: 'center', gap: '4px', marginTop: '6px' });
+
+    const hexInput = el('input', { 'data-editor-ui': '' });
+    hexInput.type = 'text';
+    hexInput.placeholder = '#hex';
+    hexInput.spellcheck = false;
+    css(hexInput, {
+      flex: '1',
+      minWidth: '0',
+      padding: '3px 6px',
+      background: 'rgba(255,255,255,0.08)',
+      border: '1px solid rgba(255,255,255,0.18)',
+      borderRadius: '4px',
+      color: '#e8e8f0',
+      fontFamily: 'monospace',
+      fontSize: '11px',
+      outline: 'none',
+    });
+
+    const applyBtn = el('button', { 'data-editor-ui': '' });
+    applyBtn.textContent = 'Apply';
+    css(applyBtn, {
+      padding: '3px 9px',
+      background: '#3b82f6',
+      border: 'none',
+      borderRadius: '4px',
+      color: '#fff',
+      fontSize: '11px',
+      fontFamily: 'inherit',
+      cursor: 'pointer',
+      flexShrink: '0',
+    });
+
+    const tryApplyHex = () => {
+      let val = hexInput.value.trim();
+      if (!val) return;
+      if (val[0] !== '#') val = '#' + val;
+      if (!/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(val)) {
+        hexInput.style.borderColor = '#ef4444';
+        return;
+      }
+      restoreSavedRange(savedRange);
+      wrapSelectionInStyledSpan('color', val);
+      hideSelectionToolbar();
+    };
+
+    hexInput.addEventListener('input', () => { hexInput.style.borderColor = 'rgba(255,255,255,0.18)'; });
+    // mousedown+preventDefault keeps the document listener from tearing down the
+    // selection/toolbar when the user clicks the input to paste.
+    hexInput.addEventListener('mousedown', e => e.stopPropagation());
+    hexInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); tryApplyHex(); }
+    });
+    applyBtn.addEventListener('mousedown', e => { e.preventDefault(); tryApplyHex(); });
+
+    hexRow.append(hexInput, applyBtn);
+    flyout.appendChild(hexRow);
   }
 
   function populateFontFlyout(flyout, savedRange) {
