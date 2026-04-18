@@ -93,7 +93,7 @@ Click **Pages** in the toolbar to open the pages panel. From there you can navig
 Click **Theme** to adjust colours, fonts, spacing, favicon, page title, and meta description. All changes are live. For multi-page sites, colours/fonts/spacing/favicon are synced to every page automatically; page title, description, and keywords stay page-specific.
 
 **Google Fonts**
-In the Typography group, click **＋ Add font variable** to open a picker with ~50 popular Google Fonts. Existing font-family variables show an **Aa** button that opens the same picker. Selecting a font automatically injects the `<link>` into the page (and syncs it to all other pages).
+In the Typography group, click **＋ Add font variable** to open a picker with ~50 popular Google Fonts. Existing font-family variables show an **Aa** button that opens the same picker. Selecting a font automatically injects the `<link>` into the page (and syncs it to all other pages). When you swap a variable to a different font, the `<link>` for the previous font is removed on the next auto-save so abandoned fonts never accumulate.
 
 **Undo / Redo**
 The **↩** and **↪** buttons in the toolbar undo and redo structural changes (AI actions, section/page deletions). Keyboard shortcuts: `Ctrl+Z` / `Ctrl+Shift+Z`. Text edits use the browser's native undo.

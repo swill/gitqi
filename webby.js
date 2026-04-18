@@ -196,6 +196,10 @@
   }
 
   async function saveChanges() {
+    // Drop <link>s for fonts that are no longer referenced before we persist or sync.
+    // Running it here (rather than per-font-change) also cleans up state that predates
+    // the prune logic, on the first save after upgrade.
+    pruneUnusedGoogleFontLinks();
     if (dirHandle) {
       await writeCurrentPageToLocalFile();
       await syncSharedToOtherPagesIfChanged();
@@ -2627,6 +2631,60 @@ RULES:
       link.rel = 'stylesheet';
       link.href = `https://fonts.googleapis.com/css2?family=${encoded}:wght@${font.weights}&display=swap`;
       head.appendChild(link);
+    }
+  }
+
+  // Extract the family name from a Google Fonts stylesheet href.
+  // e.g. ".../css2?family=Open+Sans:wght@400" → "Open Sans"
+  function fontFamilyFromLinkHref(href) {
+    const m = (href || '').match(/[?&]family=([^&:]+)/);
+    if (!m) return null;
+    try { return decodeURIComponent(m[1]).replace(/\+/g, ' '); }
+    catch (_) { return m[1].replace(/\+/g, ' '); }
+  }
+
+  // Concatenate every CSS block Webby manages (main <style>, nav style, per-section styles).
+  // Used to detect whether a given font family is still referenced anywhere.
+  function getAllManagedCSS() {
+    const parts = [];
+    const mainStyle = getMainStyleElement(document);
+    if (mainStyle) parts.push(mainStyle.textContent);
+    document.querySelectorAll('style#__webby-nav-styles, style[id^="__webby-section-"]')
+      .forEach(s => parts.push(s.textContent));
+    return parts.join('\n');
+  }
+
+  // Parse font-family and --font-* declarations out of a CSS string and return
+  // the set of named families (unquoted, no generic fallbacks filtered out — we
+  // only compare against known Google Font names, so extras are harmless).
+  function extractReferencedFontNames(css) {
+    const names = new Set();
+    const declRe = /(?:font-family\s*:|--font[\w-]*\s*:)\s*([^;}]+)/gi;
+    let m;
+    while ((m = declRe.exec(css))) {
+      m[1].split(',').forEach(part => {
+        const name = part.trim().replace(/^['"]|['"]$/g, '').trim();
+        if (name && !name.startsWith('var(')) names.add(name);
+      });
+    }
+    return names;
+  }
+
+  // Remove Google Fonts stylesheet <link>s whose family no longer appears in any
+  // managed CSS. When the last stylesheet is removed, the preconnects are cleared
+  // too so abandoned fonts don't linger and slow down page load.
+  function pruneUnusedGoogleFontLinks() {
+    const head = document.head;
+    const referenced = extractReferencedFontNames(getAllManagedCSS());
+    head.querySelectorAll('link[href*="fonts.googleapis.com/css"]').forEach(link => {
+      const family = fontFamilyFromLinkHref(link.getAttribute('href'));
+      if (family && !referenced.has(family)) link.remove();
+    });
+    if (!head.querySelector('link[href*="fonts.googleapis.com/css"]')) {
+      head.querySelectorAll(
+        'link[rel="preconnect"][href="https://fonts.googleapis.com"],' +
+        'link[rel="preconnect"][href="https://fonts.gstatic.com"]'
+      ).forEach(l => l.remove());
     }
   }
 

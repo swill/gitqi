@@ -552,9 +552,15 @@ makeGoogleFontPicker(onPick)
       The picker itself never injects <link>s — callers decide when to commit.
       (Prevents cancelled / previewed picks from leaking font links into <head>,
        which the shared-head sync would otherwise push to every page.)
+
+pruneUnusedGoogleFontLinks()   ← called at the top of saveChanges() on every auto-save
+  ├── extractReferencedFontNames(getAllManagedCSS())  ← scans main <style>, nav style,
+  │       and per-section styles for font-family: and --font-* declarations
+  └── For each <link href*="fonts.googleapis.com/css">: if its family is not referenced,
+      remove it. When the last stylesheet is removed, the preconnects are also cleared.
 ```
 
-The shared-head sync treats every `<link href*="fonts.googleapis.com">` and `<link href*="fonts.gstatic.com">` as site-wide — adding a font on any page distributes it to all other pages on the next auto-save.
+The shared-head sync treats every `<link href*="fonts.googleapis.com">` and `<link href*="fonts.gstatic.com">` as site-wide — adding a font on any page distributes it to all other pages on the next auto-save. Because prune runs before the snapshot, abandoned font `<link>`s are also distributed — i.e. *removed* from every page — on the next sync.
 
 ### 19. DOM Helpers
 
