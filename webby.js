@@ -132,7 +132,7 @@
       display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
       borderRadius: '8px',
       fontFamily: T.fontHead, fontWeight: '700', fontSize: '14px',
-      color: T.primary,
+      color: '#fff',
       background: `linear-gradient(135deg, ${T.accent} 0%, ${T.secondary} 55%, ${T.accent2} 100%)`,
       boxShadow: '0 6px 14px -6px rgba(217, 70, 239, 0.6)',
       marginRight: '4px',
@@ -223,7 +223,7 @@
     });
     btn.addEventListener('mouseenter', () => {
       if (primary) {
-        btn.style.background = T.accent3;
+        btn.style.background = T.accent2;
         btn.style.transform = 'translateY(-1px)';
       } else {
         btn.style.background = 'rgba(253, 251, 245, 0.12)';
@@ -457,7 +457,7 @@
       <div id="__webby-banner-error" style="margin-top:14px;font-size:12.5px;color:${T.danger};min-height:16px;"></div>
     `;
     const grantBtn = modal.querySelector('#__webby-banner-grant');
-    grantBtn.addEventListener('mouseenter', () => { grantBtn.style.background = T.accent3; grantBtn.style.transform = 'translateY(-2px)'; });
+    grantBtn.addEventListener('mouseenter', () => { grantBtn.style.background = T.accent2; grantBtn.style.transform = 'translateY(-2px)'; });
     grantBtn.addEventListener('mouseleave', () => { grantBtn.style.background = T.accent; grantBtn.style.transform = 'translateY(0)'; });
 
     overlay.appendChild(modal);
@@ -984,7 +984,7 @@
       textarea.style.borderColor = T.border;
       textarea.style.boxShadow = 'none';
     });
-    submitBtn.addEventListener('mouseenter', () => { submitBtn.style.background = T.accent3; submitBtn.style.transform = 'translateY(-2px)'; });
+    submitBtn.addEventListener('mouseenter', () => { submitBtn.style.background = T.accent2; submitBtn.style.transform = 'translateY(-2px)'; });
     submitBtn.addEventListener('mouseleave', () => { submitBtn.style.background = T.accent; submitBtn.style.transform = 'translateY(0)'; });
     cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = T.bgAlt; });
     cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.background = 'transparent'; });
@@ -1243,7 +1243,7 @@ RULES:
       textarea.style.borderColor = T.border;
       textarea.style.boxShadow = 'none';
     });
-    submitBtn.addEventListener('mouseenter', () => { submitBtn.style.background = T.accent3; submitBtn.style.transform = 'translateY(-2px)'; });
+    submitBtn.addEventListener('mouseenter', () => { submitBtn.style.background = T.accent2; submitBtn.style.transform = 'translateY(-2px)'; });
     submitBtn.addEventListener('mouseleave', () => { submitBtn.style.background = T.accent; submitBtn.style.transform = 'translateY(0)'; });
     cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = T.bgAlt; });
     cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.background = 'transparent'; });
@@ -1565,7 +1565,7 @@ RULES:
           fontWeight: '500',
           transition: 'background 0.15s, border-color 0.15s',
         });
-        openBtn.addEventListener('mouseenter', () => { openBtn.style.background = T.accent3; openBtn.style.borderColor = 'transparent'; });
+        openBtn.addEventListener('mouseenter', () => { openBtn.style.background = T.accent2; openBtn.style.borderColor = 'transparent'; });
         openBtn.addEventListener('mouseleave', () => { openBtn.style.background = T.bgAlt; openBtn.style.borderColor = T.borderSoft; });
 
         const delBtn = el('button');
@@ -1626,7 +1626,7 @@ RULES:
       transition: 'background 0.18s ease, transform 0.18s ease',
     });
     if (dirHandle) {
-      addBtn.addEventListener('mouseenter', () => { addBtn.style.background = T.accent3; addBtn.style.transform = 'translateY(-2px)'; });
+      addBtn.addEventListener('mouseenter', () => { addBtn.style.background = T.accent2; addBtn.style.transform = 'translateY(-2px)'; });
       addBtn.addEventListener('mouseleave', () => { addBtn.style.background = T.accent; addBtn.style.transform = 'translateY(0)'; });
       addBtn.addEventListener('click', () => { panel.remove(); promptAddPage(); });
     }
@@ -1750,7 +1750,7 @@ RULES:
     };
     focusRing(descInput);
     focusRing(labelInput);
-    submitBtn.addEventListener('mouseenter', () => { submitBtn.style.background = T.accent3; submitBtn.style.transform = 'translateY(-2px)'; });
+    submitBtn.addEventListener('mouseenter', () => { submitBtn.style.background = T.accent2; submitBtn.style.transform = 'translateY(-2px)'; });
     submitBtn.addEventListener('mouseleave', () => { submitBtn.style.background = T.accent; submitBtn.style.transform = 'translateY(0)'; });
     cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = T.bgAlt; });
     cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.background = 'transparent'; });
@@ -2320,7 +2320,7 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
       textarea.style.borderColor = T.border;
       textarea.style.boxShadow = 'none';
     });
-    submitBtn.addEventListener('mouseenter', () => { submitBtn.style.background = T.accent3; submitBtn.style.transform = 'translateY(-2px)'; });
+    submitBtn.addEventListener('mouseenter', () => { submitBtn.style.background = T.accent2; submitBtn.style.transform = 'translateY(-2px)'; });
     submitBtn.addEventListener('mouseleave', () => { submitBtn.style.background = T.accent; submitBtn.style.transform = 'translateY(0)'; });
     cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = T.bgAlt; });
     cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.background = 'transparent'; });
@@ -3428,7 +3428,7 @@ RULES:
           const confirmBtn = el('button');
           confirmBtn.textContent = 'Add';
           css(confirmBtn, { padding: '5px 14px', background: T.accent, color: T.primary, border: '2px solid transparent', borderRadius: T.radiusPill, fontSize: '11.5px', fontWeight: '600', cursor: 'pointer', fontFamily: T.fontBody, boxShadow: T.shadowCta, transition: 'background 0.15s, transform 0.15s' });
-          confirmBtn.addEventListener('mouseenter', () => { confirmBtn.style.background = T.accent3; confirmBtn.style.transform = 'translateY(-1px)'; });
+          confirmBtn.addEventListener('mouseenter', () => { confirmBtn.style.background = T.accent2; confirmBtn.style.transform = 'translateY(-1px)'; });
           confirmBtn.addEventListener('mouseleave', () => { confirmBtn.style.background = T.accent; confirmBtn.style.transform = 'translateY(0)'; });
 
           const cancelBtn = el('button');
@@ -3602,7 +3602,7 @@ RULES:
           toggleBtn.style.borderColor = T.border;
           return;
         }
-        toggleBtn.style.background = T.accent3;
+        toggleBtn.style.background = T.accent2;
         toggleBtn.style.borderColor = 'transparent';
         pickerEl = makeGoogleFontPicker((font, value) => {
           applyValue(value);
@@ -4253,10 +4253,10 @@ RULES:
       width: '30px',
       height: '30px',
       padding: '0',
-      background: active ? 'rgba(253, 224, 71, 0.22)' : 'transparent',
+      background: active ? 'rgba(45, 212, 191, 0.25)' : 'transparent',
       border: 'none',
       borderRadius: '8px',
-      color: active ? T.accent3 : T.bg,
+      color: active ? T.accent2 : T.bg,
       cursor: 'pointer',
       fontSize: '13px',
       display: 'flex',
@@ -4267,10 +4267,10 @@ RULES:
       fontFamily: T.fontBody,
     });
     btn.addEventListener('mouseenter', () => {
-      btn.style.background = active ? 'rgba(253, 224, 71, 0.32)' : 'rgba(253, 251, 245, 0.12)';
+      btn.style.background = active ? 'rgba(45, 212, 191, 0.38)' : 'rgba(253, 251, 245, 0.12)';
     });
     btn.addEventListener('mouseleave', () => {
-      btn.style.background = active ? 'rgba(253, 224, 71, 0.22)' : 'transparent';
+      btn.style.background = active ? 'rgba(45, 212, 191, 0.25)' : 'transparent';
     });
     // mousedown + preventDefault keeps the selection alive while we act on it
     btn.addEventListener('mousedown', e => {
@@ -4529,7 +4529,7 @@ RULES:
     });
 
     const doneBtn = popover.querySelector('#__webby-link-done');
-    doneBtn.addEventListener('mouseenter', () => { doneBtn.style.background = T.accent3; doneBtn.style.transform = 'translateY(-1px)'; });
+    doneBtn.addEventListener('mouseenter', () => { doneBtn.style.background = T.accent2; doneBtn.style.transform = 'translateY(-1px)'; });
     doneBtn.addEventListener('mouseleave', () => { doneBtn.style.background = T.accent; doneBtn.style.transform = 'translateY(0)'; });
     doneBtn.addEventListener('click', closeLinkPopover);
 
