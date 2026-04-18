@@ -231,9 +231,10 @@ getSharedSnapshot()
 syncSharedToOtherPagesIfChanged()
   ├── snapshot = getSharedSnapshot()
   ├── if snapshot === lastSyncedSharedSnapshot → return (no-op)
+  ├── activeMarker = extractActiveMarker(sourceNav, CURRENT_FILENAME)  ← { classes, ariaCurrent } or null
   └── For each page in pagesInventory (skip current):
         ├── Read page file from dirHandle → DOMParser
-        ├── Replace <nav>
+        ├── Replace <nav> → retargetActiveMarker(newNav, activeMarker, page.file)  ← per-page "current link" styling
         ├── Replace main <style> textContent (insert if missing)
         ├── Upsert/remove <style id="__webby-nav-styles">
         ├── syncLinkRelInDoc(doc, 'icon', …) + apple-touch-icon
@@ -241,6 +242,10 @@ syncSharedToOtherPagesIfChanged()
         └── Write back
   └── lastSyncedSharedSnapshot = snapshot
 ```
+
+**Active-link retargeting** — the sync copies the source nav verbatim but then rewrites the "current page" marker for each destination. Without this, every synced page would end up with the source page's link highlighted as active.
+
+Recognised markers (`ACTIVE_CLASS_CANDIDATES`): CSS classes `active`, `current`, `is-active`, `is-current`, `selected`, and the `aria-current` attribute. `extractActiveMarker()` reads whichever are present on the anchor(s) matching `CURRENT_FILENAME`; `retargetActiveMarker()` strips all of them from the cloned nav and re-applies them to anchors whose `href` matches the destination page.
 
 ### 6. Mutation Observer
 

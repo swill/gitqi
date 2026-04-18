@@ -486,6 +486,46 @@
     });
   }
 
+  // Normalize an href to a plain filename for comparison (drops ./, fragment, query).
+  function normalizeHref(href) {
+    return (href || '').replace(/^\.\//, '').split('#')[0].split('?')[0];
+  }
+
+  // Common "current page" marker classes used by hand-written and AI-generated navs.
+  const ACTIVE_CLASS_CANDIDATES = ['active', 'current', 'is-active', 'is-current', 'selected'];
+
+  // Inspect the source nav to learn how the current page marks its own link as active.
+  // Returns { classes, ariaCurrent } or null if no recognised marker is present.
+  // Only classes from ACTIVE_CLASS_CANDIDATES are treated as active markers — this
+  // avoids false positives on unrelated unique classes (e.g. `has-megamenu`).
+  function extractActiveMarker(navEl, sourceFilename) {
+    const sourceAnchors = Array.from(navEl.querySelectorAll('a[href]'))
+      .filter(a => normalizeHref(a.getAttribute('href')) === sourceFilename);
+    if (!sourceAnchors.length) return null;
+
+    const ref = sourceAnchors[0];
+    const classes = Array.from(ref.classList).filter(c => ACTIVE_CLASS_CANDIDATES.includes(c));
+    const ariaCurrent = ref.getAttribute('aria-current');
+    if (!classes.length && !ariaCurrent) return null;
+    return { classes, ariaCurrent };
+  }
+
+  // Remove all known active markers from every anchor in `navEl`, then apply
+  // `marker` to anchors whose href targets `destFilename`.
+  function retargetActiveMarker(navEl, marker, destFilename) {
+    navEl.querySelectorAll('a').forEach(a => {
+      ACTIVE_CLASS_CANDIDATES.forEach(c => a.classList.remove(c));
+      a.removeAttribute('aria-current');
+      if (a.hasAttribute('class') && a.classList.length === 0) a.removeAttribute('class');
+    });
+    if (!marker) return;
+    navEl.querySelectorAll('a[href]').forEach(a => {
+      if (normalizeHref(a.getAttribute('href')) !== destFilename) return;
+      marker.classes.forEach(c => a.classList.add(c));
+      if (marker.ariaCurrent) a.setAttribute('aria-current', marker.ariaCurrent);
+    });
+  }
+
   async function syncSharedToOtherPagesIfChanged() {
     if (!dirHandle || !pagesInventory) return;
     const snapshot = getSharedSnapshot();
@@ -493,6 +533,8 @@
 
     const shared = getSharedHeadElements();
     const currentNavHTML = getNavHTML();
+    const sourceNav = document.querySelector('nav');
+    const activeMarker = sourceNav ? extractActiveMarker(sourceNav, CURRENT_FILENAME) : null;
 
     for (const page of pagesInventory.pages) {
       if (page.file === CURRENT_FILENAME) continue;
@@ -502,14 +544,18 @@
         const text = await pageFile.text();
         const doc = new DOMParser().parseFromString(text, 'text/html');
 
-        // Replace <nav>
+        // Replace <nav> — re-target the "current page" active marker so each
+        // destination page marks its own link, not the link of the source page.
         if (currentNavHTML) {
           const existingNav = doc.querySelector('nav');
           if (existingNav) {
             const tmp = doc.createElement('div');
             tmp.innerHTML = currentNavHTML;
             const newNav = tmp.querySelector('nav');
-            if (newNav) existingNav.replaceWith(newNav);
+            if (newNav) {
+              retargetActiveMarker(newNav, activeMarker, page.file);
+              existingNav.replaceWith(newNav);
+            }
           }
         }
 

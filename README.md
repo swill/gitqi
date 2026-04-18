@@ -196,6 +196,8 @@ Synced site-wide:
 - `<link rel="icon">` and `<link rel="apple-touch-icon">` (favicon)
 - Google Fonts `<link>`s (plus their preconnect links)
 
+When the nav is synced, the "current page" highlight is re-targeted for each destination: the link matching that page gets the active marker, and every other link is cleared. Recognised markers are the `aria-current` attribute and the CSS classes `active`, `current`, `is-active`, `is-current`, and `selected`.
+
 Left page-specific: `<title>`, `<meta name="description">`, `<meta name="keywords">`.
 
 ---
