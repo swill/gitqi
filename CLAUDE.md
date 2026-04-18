@@ -62,7 +62,7 @@ init()  [async]
         ├── If found + permission granted → dirHandle = stored (silent)
         │     └── loadPagesInventory()
         └── Else → showAccessBanner()
-  └── lastSyncedNavHTML = getNavHTML()  ← baseline for nav change detection
+  └── lastSyncedSharedSnapshot = getSharedSnapshot()  ← baseline for shared head + nav change detection
 ```
 
 ### Required Globals (set by `secrets.js`)
@@ -162,7 +162,7 @@ showAccessBanner()
 
 saveChanges()  ← called by auto-save timer
   ├── writeCurrentPageToLocalFile()
-  └── syncNavToOtherPagesIfChanged()
+  └── syncSharedToOtherPagesIfChanged()
 
 scheduleAutoSave()  ← debounced 1500ms; triggered by setDirty(true)
   └── saveChanges()
@@ -171,7 +171,7 @@ writeCurrentPageToLocalFile()
   └── serialize({ local: true }) → write CURRENT_FILENAME to dirHandle
 
 writePageToLocalFile(filename, content)
-  └── Write any page file (used by page generator and nav sync)
+  └── Write any page file (used by page generator and shared sync)
 
 writeImageToLocalDir(file)
   └── Write to assets/ subdirectory in the linked folder
@@ -198,23 +198,48 @@ savePagesInventory()
   └── Write webby-pages.json to dirHandle
 ```
 
-### 5. Nav Sync
+### 5. Shared Head + Nav Sync
 
-On every auto-save, compares the current nav HTML against a snapshot taken after the last sync. If changed, writes the updated nav into every other page file on disk.
+On every auto-save, compares a JSON snapshot of the current page's shared head elements plus the nav against the snapshot from the last sync. If anything changed, the updated elements are written into every other page file on disk.
 
 Also triggered immediately (not via auto-save timer) after: Reformat Nav, Add Page, Delete Page.
+
+**Synced** (page-to-page, whole-site):
+- `<nav>`
+- Main `<style>` (CSS variables + base styles — whatever the theme editor writes to)
+- `<style id="__webby-nav-styles">` (nav-specific CSS)
+- `<link rel="icon">` and `<link rel="apple-touch-icon">` (favicon)
+- Google Fonts `<link>`s matching `fonts.googleapis.com` or `fonts.gstatic.com` (including preconnects)
+
+**NOT synced** (intentionally page-specific):
+- `<title>`, `<meta name="description">`, `<meta name="keywords">`
 
 ```
 getNavHTML()
   └── Clone nav → strip [data-editor-ui] + data-webby-nav-bound → return outerHTML
 
-syncNavToOtherPagesIfChanged()
-  ├── currentNavHTML = getNavHTML()
-  ├── if currentNavHTML === lastSyncedNavHTML → return (no-op)
+getMainStyleElement(root)
+  └── First <style> in head whose id isn't a __webby-* managed id
+
+getSharedHeadElements()
+  └── { mainStyle, navStyle, favicon, appleIcon, googleFontLinks }
+
+getSharedSnapshot()
+  └── JSON.stringify({ nav, mainStyle.text, navStyle.text, favicon.outerHTML,
+                        appleIcon.outerHTML, googleFontLinks (sorted) })
+
+syncSharedToOtherPagesIfChanged()
+  ├── snapshot = getSharedSnapshot()
+  ├── if snapshot === lastSyncedSharedSnapshot → return (no-op)
   └── For each page in pagesInventory (skip current):
-        ├── Read page file from dirHandle
-        ├── DOMParser → replace <nav> with currentNavHTML → write back
-        └── lastSyncedNavHTML = currentNavHTML
+        ├── Read page file from dirHandle → DOMParser
+        ├── Replace <nav>
+        ├── Replace main <style> textContent (insert if missing)
+        ├── Upsert/remove <style id="__webby-nav-styles">
+        ├── syncLinkRelInDoc(doc, 'icon', …) + apple-touch-icon
+        ├── syncGoogleFontLinksInDoc(doc, googleFontLinks)  ← clears old, inserts fresh copies before first <style>
+        └── Write back
+  └── lastSyncedSharedSnapshot = snapshot
 ```
 
 ### 6. Mutation Observer
@@ -334,7 +359,7 @@ promptReformatNav(nav) → snapshotForUndo() → reformatNav(nav, description)
   ├── nav.replaceWith(newNav)
   ├── rerunInlineScripts(newNav)       ← rebinds hamburger toggle listeners on new elements
   ├── activateNav()
-  └── lastSyncedNavHTML = '' → syncNavToOtherPagesIfChanged()  ← immediate force-sync
+  └── lastSyncedSharedSnapshot = '' → syncSharedToOtherPagesIfChanged()  ← immediate force-sync
 
 addLinkToNav(navEl, label, href)  ← programmatic link insertion (used by page generator)
   ├── Strategy 1: find all <ul>/<ol> with <li><a> → clone last item per list, update, append
@@ -370,13 +395,13 @@ promptAddPage() / generatePage(description, navLabel, filename)
   ├── Register in pagesInventory → savePagesInventory()
   ├── addLinkToNav(currentNav, navLabel, href)  ← programmatic nav update
   ├── activateNav()
-  └── lastSyncedNavHTML = '' → syncNavToOtherPagesIfChanged()  ← distributes new link to all pages
+  └── lastSyncedSharedSnapshot = '' → syncSharedToOtherPagesIfChanged()  ← distributes nav link + shared head to all pages (incl. new file)
 
 deletePageFromSite(page)
   ├── removePageFromNav(navEl, filename)  ← strip nav links to the deleted page
   ├── pagesInventory.pages.filter(...)   ← remove from inventory + savePagesInventory()
   ├── dirHandle.removeEntry(filename)    ← delete local file
-  └── lastSyncedNavHTML = '' → syncNavToOtherPagesIfChanged()  ← sync cleaned nav to all pages
+  └── lastSyncedSharedSnapshot = '' → syncSharedToOtherPagesIfChanged()  ← sync cleaned nav to all pages
 ```
 
 ### 13. AI Section Generator
@@ -470,7 +495,7 @@ restoreSnapshot(snapshot)
   ├── activateZones() + activateNav()
   ├── rerunInlineScripts(nav)   ← rebinds hamburger toggle after DOM replacement
   ├── bindMutationObserver()    ← restart observer (was disconnected)
-  └── lastSyncedNavHTML = getNavHTML()
+  └── lastSyncedSharedSnapshot = getSharedSnapshot()
 
 undo()  → redoStack.push(captureSnapshot()) → restoreSnapshot(undoStack.pop())
 redo()  → undoStack.push(captureSnapshot()) → restoreSnapshot(redoStack.pop())
@@ -487,18 +512,46 @@ Panel that exposes CSS custom properties and site identity fields as live inputs
 ```
 openThemeEditor()  ← toggled by Theme toolbar button; mutually exclusive with Pages panel
   ├── Site Identity section:
-  │     ├── Favicon picker → convertImageToPng() → github.uploadFile() + local write
-  │     ├── Page title input → document.title + <title> element
-  │     ├── Meta description textarea → <meta name="description">
-  │     └── Keywords input → <meta name="keywords">
+  │     ├── Favicon picker → convertImageToPng() → github.uploadFile() + local write → upsertFaviconLinks()
+  │     │     (sync then propagates <link rel="icon"> + apple-touch-icon to all pages)
+  │     ├── Page title input → document.title + <title>  ← page-specific, not synced
+  │     ├── Meta description textarea → <meta name="description">  ← page-specific
+  │     └── Keywords input → <meta name="keywords">  ← page-specific
   └── CSS Variables section (grouped: Colors / Typography / Spacing / Layout):
         ├── Color variables → color picker + hex input
+        ├── Font-family variables → text input + "Aa" toggle button → makeGoogleFontPicker()
+        │     └── Pick applies value + ensureGoogleFontLink(font)
         ├── Other variables → text input
-        ├── "Add font variable" inline form (Typography group only)
+        ├── "Add font variable" inline form (Typography group only):
+        │     ├── --font-{name} + value inputs
+        │     ├── makeGoogleFontPicker() below the value input
+        │     │     (pick fills value + auto-suggests name; <link> injected on Add, not on preview)
+        │     └── On Add: addStyleVar() + ensureGoogleFontLink(pickedFont)
         └── On input: document.documentElement.style.setProperty() + patch <style> textContent
+              (main <style> mutations then propagate to every page via the shared sync)
 ```
 
-### 18. DOM Helpers
+### 18. Google Fonts
+
+Curated list of ~50 popular families with sensible weight sets, grouped by category (sans-serif, serif, display, handwriting, monospace). Defined in `GOOGLE_FONTS`.
+
+```
+ensureGoogleFontLink(font)
+  ├── Upsert <link rel="preconnect" href="https://fonts.googleapis.com">
+  ├── Upsert <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  └── Append <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family={name}:wght@{weights}&display=swap">
+      (idempotent — skips insertion if a <link> for the family is already present)
+
+makeGoogleFontPicker(onPick)
+  └── Returns a filterable list of GOOGLE_FONTS; click fires onPick(font, fontFamilyStack(font))
+      The picker itself never injects <link>s — callers decide when to commit.
+      (Prevents cancelled / previewed picks from leaking font links into <head>,
+       which the shared-head sync would otherwise push to every page.)
+```
+
+The shared-head sync treats every `<link href*="fonts.googleapis.com">` and `<link href*="fonts.gstatic.com">` as site-wide — adding a font on any page distributes it to all other pages on the next auto-save.
+
+### 19. DOM Helpers
 
 ```
 rerunInlineScripts(el)

@@ -1,5 +1,5 @@
 /**
- * webby.js — v1.1.0
+ * webby.js — v1.2.0
  * Zero-dependency browser-based site editor.
  * Activates only when window.SITE_SECRETS is present (local edit mode).
  * Stripped from exported/published HTML automatically.
@@ -7,7 +7,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.1.0';
+  const VERSION = '1.2.0';
 
   if (!window.SITE_SECRETS) return;
 
@@ -23,7 +23,7 @@
   let autoSaveTimer = null;
   let dirHandle = null; // FileSystemDirectoryHandle when folder access is granted
   let pagesInventory = null; // { pages: [{ file, title, navLabel }] } — loaded from webby-pages.json
-  let lastSyncedNavHTML = ''; // snapshot of nav after last sync; change detection for auto-save
+  let lastSyncedSharedSnapshot = ''; // JSON snapshot of shared head + nav after last sync; change detection for auto-save
 
   const UNDO_LIMIT = 20;
   let undoStack = [];
@@ -198,7 +198,7 @@
   async function saveChanges() {
     if (dirHandle) {
       await writeCurrentPageToLocalFile();
-      await syncNavToOtherPagesIfChanged();
+      await syncSharedToOtherPagesIfChanged();
     }
     // No dirHandle yet — changes accumulate in the DOM until the folder is linked.
   }
@@ -386,7 +386,7 @@
         overlay.remove();
         await writeCurrentPageToLocalFile();
         await loadPagesInventory();
-        lastSyncedNavHTML = getNavHTML();
+        lastSyncedSharedSnapshot = getSharedSnapshot();
         showStatus('Folder linked ✓ — edits now save to your files automatically');
       } catch (e) {
         if (e.name !== 'AbortError') errEl.textContent = e.message || 'Could not access folder';
@@ -432,11 +432,17 @@
     } catch (_) {}
   }
 
-  // ─── Nav Sync ─────────────────────────────────────────────────────────────
+  // ─── Shared Head + Nav Sync ───────────────────────────────────────────────
   //
-  // On every auto-save we snapshot the current nav and compare against the last
-  // synced version. If it changed, we push the updated nav into every other local
-  // page file. This covers all edit paths: link popover, AI reformat, direct typing.
+  // On every auto-save we snapshot the current page's shared head elements plus
+  // the nav, and compare against the last synced version. If anything changed,
+  // we push the updated shared elements into every other local page file.
+  //
+  // Synced: <nav>, main <style> (CSS variables + base styles),
+  //   <style id="__webby-nav-styles">, <link rel="icon">,
+  //   <link rel="apple-touch-icon">, Google Fonts <link>s and their preconnects.
+  // NOT synced: <title>, <meta name="description">, <meta name="keywords"> —
+  //   these are intentionally page-specific.
 
   function getNavHTML() {
     const nav = document.querySelector('nav');
@@ -447,10 +453,46 @@
     return clone.outerHTML;
   }
 
-  async function syncNavToOtherPagesIfChanged() {
+  // The main <style> block is the first <style> that isn't one of Webby's
+  // managed blocks (nav or per-section). Matches what the theme editor uses.
+  function getMainStyleElement(root) {
+    const head = root.head || root;
+    const styles = Array.from(head.querySelectorAll('style'));
+    return styles.find(s => !s.id || !s.id.startsWith('__webby-')) || null;
+  }
+
+  function getSharedHeadElements() {
+    const head = document.head;
+    return {
+      mainStyle: getMainStyleElement(document),
+      navStyle:  head.querySelector('style#__webby-nav-styles'),
+      favicon:   head.querySelector('link[rel="icon"]'),
+      appleIcon: head.querySelector('link[rel="apple-touch-icon"]'),
+      googleFontLinks: Array.from(head.querySelectorAll(
+        'link[href*="fonts.googleapis.com"], link[href*="fonts.gstatic.com"]'
+      )),
+    };
+  }
+
+  function getSharedSnapshot() {
+    const s = getSharedHeadElements();
+    return JSON.stringify({
+      nav:       getNavHTML(),
+      mainStyle: s.mainStyle ? s.mainStyle.textContent : '',
+      navStyle:  s.navStyle  ? s.navStyle.textContent  : '',
+      favicon:   s.favicon   ? s.favicon.outerHTML     : '',
+      appleIcon: s.appleIcon ? s.appleIcon.outerHTML   : '',
+      googleFontLinks: s.googleFontLinks.map(l => l.outerHTML).sort(),
+    });
+  }
+
+  async function syncSharedToOtherPagesIfChanged() {
     if (!dirHandle || !pagesInventory) return;
+    const snapshot = getSharedSnapshot();
+    if (snapshot === lastSyncedSharedSnapshot) return;
+
+    const shared = getSharedHeadElements();
     const currentNavHTML = getNavHTML();
-    if (!currentNavHTML || currentNavHTML === lastSyncedNavHTML) return;
 
     for (const page of pagesInventory.pages) {
       if (page.file === CURRENT_FILENAME) continue;
@@ -459,13 +501,52 @@
         const pageFile = await fh.getFile();
         const text = await pageFile.text();
         const doc = new DOMParser().parseFromString(text, 'text/html');
-        const existingNav = doc.querySelector('nav');
-        if (!existingNav) continue;
-        const tmp = document.createElement('div');
-        tmp.innerHTML = currentNavHTML;
-        const newNav = tmp.querySelector('nav');
-        if (!newNav) continue;
-        existingNav.replaceWith(newNav);
+
+        // Replace <nav>
+        if (currentNavHTML) {
+          const existingNav = doc.querySelector('nav');
+          if (existingNav) {
+            const tmp = doc.createElement('div');
+            tmp.innerHTML = currentNavHTML;
+            const newNav = tmp.querySelector('nav');
+            if (newNav) existingNav.replaceWith(newNav);
+          }
+        }
+
+        // Replace main <style>
+        if (shared.mainStyle) {
+          const destMain = getMainStyleElement(doc);
+          if (destMain) {
+            destMain.textContent = shared.mainStyle.textContent;
+          } else {
+            const s = doc.createElement('style');
+            s.textContent = shared.mainStyle.textContent;
+            doc.head.appendChild(s);
+          }
+        }
+
+        // Replace nav style block (or remove if source no longer has one)
+        const destNavStyle = doc.head.querySelector('style#__webby-nav-styles');
+        if (shared.navStyle) {
+          if (destNavStyle) {
+            destNavStyle.textContent = shared.navStyle.textContent;
+          } else {
+            const s = doc.createElement('style');
+            s.id = '__webby-nav-styles';
+            s.textContent = shared.navStyle.textContent;
+            doc.head.appendChild(s);
+          }
+        } else if (destNavStyle) {
+          destNavStyle.remove();
+        }
+
+        // Sync favicon links
+        syncLinkRelInDoc(doc, 'icon', shared.favicon);
+        syncLinkRelInDoc(doc, 'apple-touch-icon', shared.appleIcon);
+
+        // Sync Google Fonts <link>s (plus preconnects)
+        syncGoogleFontLinksInDoc(doc, shared.googleFontLinks);
+
         const updated = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
         const writeFh = await dirHandle.getFileHandle(page.file, { create: false });
         const writable = await writeFh.createWritable();
@@ -474,7 +555,38 @@
       } catch (_) {} // Non-fatal — skip pages that can't be read/written
     }
 
-    lastSyncedNavHTML = currentNavHTML;
+    lastSyncedSharedSnapshot = snapshot;
+  }
+
+  // Upsert or remove a <link rel="X"> in `doc` to match the source element.
+  // Source null → any existing link with that rel is removed.
+  function syncLinkRelInDoc(doc, rel, source) {
+    let link = doc.head.querySelector(`link[rel="${rel}"]`);
+    if (source) {
+      if (!link) {
+        link = doc.createElement('link');
+        doc.head.appendChild(link);
+      }
+      Array.from(link.attributes).forEach(a => link.removeAttribute(a.name));
+      Array.from(source.attributes).forEach(a => link.setAttribute(a.name, a.value));
+    } else if (link) {
+      link.remove();
+    }
+  }
+
+  // Replace all Google Fonts <link>s in `doc` with copies of `sourceLinks`.
+  // Inserted before the first <style> so fonts load before inline CSS references them.
+  function syncGoogleFontLinksInDoc(doc, sourceLinks) {
+    doc.head.querySelectorAll(
+      'link[href*="fonts.googleapis.com"], link[href*="fonts.gstatic.com"]'
+    ).forEach(l => l.remove());
+    const firstStyle = doc.head.querySelector('style');
+    sourceLinks.forEach(src => {
+      const link = doc.createElement('link');
+      Array.from(src.attributes).forEach(a => link.setAttribute(a.name, a.value));
+      if (firstStyle) doc.head.insertBefore(link, firstStyle);
+      else doc.head.appendChild(link);
+    });
   }
 
   // ─── Zone Manager ─────────────────────────────────────────────────────────
@@ -986,8 +1098,8 @@ RULES:
 
     // Force immediate sync to other pages — don't rely on the auto-save timer
     // for a deliberate nav change (same pattern as generatePage / deletePageFromSite).
-    lastSyncedNavHTML = '';
-    await syncNavToOtherPagesIfChanged();
+    lastSyncedSharedSnapshot = '';
+    await syncSharedToOtherPagesIfChanged();
 
     setDirty(true);
   }
@@ -1447,8 +1559,8 @@ RULES:
     }
 
     // Force re-sync: push the updated nav (with new link) to all pages including the new file
-    lastSyncedNavHTML = '';
-    await syncNavToOtherPagesIfChanged();
+    lastSyncedSharedSnapshot = '';
+    await syncSharedToOtherPagesIfChanged();
 
     setDirty(true);
   }
@@ -1620,8 +1732,8 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
     }
 
     // 4. Force nav re-sync so the deleted page's link is removed from all remaining pages
-    lastSyncedNavHTML = '';
-    await syncNavToOtherPagesIfChanged();
+    lastSyncedSharedSnapshot = '';
+    await syncSharedToOtherPagesIfChanged();
 
     setDirty(true);
     showStatus(`Page "${navLabel}" deleted ✓`);
@@ -1731,8 +1843,8 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
     if (restoredNav) rerunInlineScripts(restoredNav);
     bindMutationObserver();
 
-    // Re-baseline nav sync so the next auto-save doesn't over-eagerly sync
-    lastSyncedNavHTML = getNavHTML();
+    // Re-baseline sync so the next auto-save doesn't over-eagerly push stale shared state
+    lastSyncedSharedSnapshot = getSharedSnapshot();
 
     setDirty(true);
     updateUndoRedoButtons();
@@ -2350,6 +2462,218 @@ RULES:
     appleLink.href = href;
   }
 
+  // ─── Google Fonts ─────────────────────────────────────────────────────────
+  //
+  // Curated list of popular Google Fonts, grouped by category with sensible
+  // weight sets. Selecting one in the theme editor injects the appropriate
+  // <link rel="stylesheet"> (plus preconnects) into <head>; the sync then
+  // propagates those links to every other page.
+
+  const GOOGLE_FONTS = [
+    // Sans-serif
+    { name: 'Inter',              cat: 'sans-serif', weights: '300;400;500;600;700' },
+    { name: 'Roboto',             cat: 'sans-serif', weights: '300;400;500;700' },
+    { name: 'Open Sans',          cat: 'sans-serif', weights: '300;400;600;700' },
+    { name: 'Lato',               cat: 'sans-serif', weights: '300;400;700;900' },
+    { name: 'Montserrat',         cat: 'sans-serif', weights: '300;400;500;600;700' },
+    { name: 'Poppins',            cat: 'sans-serif', weights: '300;400;500;600;700' },
+    { name: 'Nunito',             cat: 'sans-serif', weights: '300;400;600;700' },
+    { name: 'Raleway',            cat: 'sans-serif', weights: '300;400;500;600;700' },
+    { name: 'Work Sans',          cat: 'sans-serif', weights: '300;400;500;600;700' },
+    { name: 'Oswald',             cat: 'sans-serif', weights: '300;400;500;600;700' },
+    { name: 'Barlow',             cat: 'sans-serif', weights: '300;400;500;600;700' },
+    { name: 'DM Sans',            cat: 'sans-serif', weights: '400;500;700' },
+    { name: 'Manrope',            cat: 'sans-serif', weights: '300;400;500;600;700' },
+    { name: 'Rubik',              cat: 'sans-serif', weights: '300;400;500;600;700' },
+    { name: 'Space Grotesk',      cat: 'sans-serif', weights: '400;500;600;700' },
+    { name: 'Outfit',             cat: 'sans-serif', weights: '300;400;500;600;700' },
+    { name: 'Plus Jakarta Sans',  cat: 'sans-serif', weights: '300;400;500;600;700' },
+    { name: 'Figtree',            cat: 'sans-serif', weights: '400;500;600;700' },
+    { name: 'Source Sans 3',      cat: 'sans-serif', weights: '300;400;600;700' },
+    { name: 'Archivo',            cat: 'sans-serif', weights: '400;500;600;700' },
+    { name: 'Kanit',              cat: 'sans-serif', weights: '300;400;500;600;700' },
+    // Serif
+    { name: 'Playfair Display',   cat: 'serif',      weights: '400;500;600;700;800' },
+    { name: 'Merriweather',       cat: 'serif',      weights: '300;400;700' },
+    { name: 'Lora',               cat: 'serif',      weights: '400;500;600;700' },
+    { name: 'PT Serif',           cat: 'serif',      weights: '400;700' },
+    { name: 'EB Garamond',        cat: 'serif',      weights: '400;500;600;700' },
+    { name: 'Crimson Pro',        cat: 'serif',      weights: '300;400;500;600;700' },
+    { name: 'Cormorant Garamond', cat: 'serif',      weights: '300;400;500;600;700' },
+    { name: 'DM Serif Display',   cat: 'serif',      weights: '400' },
+    { name: 'Libre Baskerville',  cat: 'serif',      weights: '400;700' },
+    { name: 'Fraunces',           cat: 'serif',      weights: '300;400;500;600;700' },
+    { name: 'Spectral',           cat: 'serif',      weights: '300;400;500;600;700' },
+    { name: 'Source Serif 4',     cat: 'serif',      weights: '300;400;600;700' },
+    // Display
+    { name: 'Abril Fatface',      cat: 'display',    weights: '400' },
+    { name: 'Bebas Neue',         cat: 'display',    weights: '400' },
+    { name: 'Archivo Black',      cat: 'display',    weights: '400' },
+    { name: 'Anton',              cat: 'display',    weights: '400' },
+    { name: 'Righteous',          cat: 'display',    weights: '400' },
+    { name: 'Lobster',            cat: 'display',    weights: '400' },
+    { name: 'Pacifico',           cat: 'display',    weights: '400' },
+    // Handwriting
+    { name: 'Caveat',             cat: 'handwriting', weights: '400;500;600;700' },
+    { name: 'Dancing Script',     cat: 'handwriting', weights: '400;500;600;700' },
+    { name: 'Kalam',              cat: 'handwriting', weights: '300;400;700' },
+    // Monospace
+    { name: 'JetBrains Mono',     cat: 'monospace',  weights: '300;400;500;600;700' },
+    { name: 'Fira Code',          cat: 'monospace',  weights: '300;400;500;600;700' },
+    { name: 'Source Code Pro',    cat: 'monospace',  weights: '300;400;500;600;700' },
+    { name: 'Roboto Mono',        cat: 'monospace',  weights: '300;400;500;600;700' },
+    { name: 'IBM Plex Mono',      cat: 'monospace',  weights: '300;400;500;600;700' },
+    { name: 'Space Mono',         cat: 'monospace',  weights: '400;700' },
+    { name: 'DM Mono',            cat: 'monospace',  weights: '400;500' },
+  ];
+
+  const GENERIC_FALLBACK = {
+    'sans-serif':  'system-ui, sans-serif',
+    'serif':       'Georgia, serif',
+    'display':     'system-ui, sans-serif',
+    'handwriting': 'cursive',
+    'monospace':   'ui-monospace, SFMono-Regular, Menlo, monospace',
+  };
+
+  // Build the CSS font-family stack for a Google Font entry.
+  function fontFamilyStack(font) {
+    return `'${font.name}', ${GENERIC_FALLBACK[font.cat] || 'sans-serif'}`;
+  }
+
+  // Insert <link> tags needed to load `font` if not already present.
+  // Also ensures the preconnects to fonts.googleapis.com and fonts.gstatic.com
+  // exist (both are recommended by Google for faster font loading).
+  function ensureGoogleFontLink(font) {
+    const head = document.head;
+    const encoded = font.name.replace(/ /g, '+');
+
+    // Preconnects
+    if (!head.querySelector('link[rel="preconnect"][href="https://fonts.googleapis.com"]')) {
+      const pc = document.createElement('link');
+      pc.rel = 'preconnect';
+      pc.href = 'https://fonts.googleapis.com';
+      head.appendChild(pc);
+    }
+    if (!head.querySelector('link[rel="preconnect"][href="https://fonts.gstatic.com"]')) {
+      const pc = document.createElement('link');
+      pc.rel = 'preconnect';
+      pc.href = 'https://fonts.gstatic.com';
+      pc.setAttribute('crossorigin', '');
+      head.appendChild(pc);
+    }
+
+    // Stylesheet for this family (skip if already present)
+    const existing = Array.from(head.querySelectorAll('link[href*="fonts.googleapis.com/css"]'))
+      .find(l => (l.getAttribute('href') || '').includes('family=' + encoded + ':') ||
+                 (l.getAttribute('href') || '').includes('family=' + encoded + '&') ||
+                 (l.getAttribute('href') || '').endsWith('family=' + encoded));
+    if (!existing) {
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = `https://fonts.googleapis.com/css2?family=${encoded}:wght@${font.weights}&display=swap`;
+      head.appendChild(link);
+    }
+  }
+
+  // Picker component: filterable list of Google Fonts. When clicked, an item
+  // applies the font (injects <link>, calls the caller's `onPick`).
+  function makeGoogleFontPicker(onPick) {
+    const container = el('div');
+    css(container, {
+      marginTop: '6px',
+      border: '1px solid #e5e7eb',
+      borderRadius: '4px',
+      background: '#fff',
+      overflow: 'hidden',
+    });
+
+    const filter = el('input');
+    filter.type = 'text';
+    filter.placeholder = 'Search Google Fonts…';
+    css(filter, {
+      width: '100%',
+      boxSizing: 'border-box',
+      padding: '5px 8px',
+      border: 'none',
+      borderBottom: '1px solid #e5e7eb',
+      fontSize: '11px',
+      fontFamily: 'inherit',
+      outline: 'none',
+    });
+
+    const list = el('div');
+    css(list, { maxHeight: '180px', overflowY: 'auto' });
+
+    const render = query => {
+      list.innerHTML = '';
+      const q = (query || '').toLowerCase().trim();
+      const matches = q
+        ? GOOGLE_FONTS.filter(f => f.name.toLowerCase().includes(q) || f.cat.includes(q))
+        : GOOGLE_FONTS;
+      if (!matches.length) {
+        const empty = el('div');
+        empty.textContent = 'No matches';
+        css(empty, { padding: '10px', fontSize: '11px', color: '#9ca3af', textAlign: 'center' });
+        list.appendChild(empty);
+        return;
+      }
+      matches.forEach(font => {
+        const item = el('div');
+        css(item, {
+          padding: '6px 10px',
+          fontSize: '13px',
+          cursor: 'pointer',
+          borderBottom: '1px solid #f3f4f6',
+          fontFamily: fontFamilyStack(font),
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'baseline',
+          gap: '8px',
+        });
+        // Note: we don't auto-load fonts for preview — that would inject a
+        // <link> for every font in the list and the shared-head sync would
+        // push all of them to every other page. Previews render in the
+        // fallback stack until the user actually picks a font.
+
+        const label = el('span');
+        label.textContent = font.name;
+        css(label, { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+
+        const tag = el('span');
+        tag.textContent = font.cat;
+        css(tag, {
+          fontSize: '9px',
+          color: '#9ca3af',
+          fontFamily: 'system-ui, sans-serif',
+          textTransform: 'uppercase',
+          letterSpacing: '0.05em',
+          flexShrink: '0',
+        });
+
+        item.append(label, tag);
+
+        item.addEventListener('mouseenter', () => { item.style.background = '#f3f4f6'; });
+        item.addEventListener('mouseleave', () => { item.style.background = ''; });
+
+        // The picker is "dumb" — it reports the selection but does NOT inject
+        // the <link> tag. The caller decides when to commit (e.g. on Add) so
+        // that cancelled / aborted picks don't leak font links into <head>
+        // (which the shared-head sync would then push to every page).
+        item.addEventListener('click', () => {
+          if (onPick) onPick(font, fontFamilyStack(font));
+        });
+
+        list.appendChild(item);
+      });
+    };
+
+    filter.addEventListener('input', () => render(filter.value));
+    render('');
+
+    container.append(filter, list);
+    return container;
+  }
+
   // ─── Theme Editor ─────────────────────────────────────────────────────────
 
   function openThemeEditor() {
@@ -2709,7 +3033,24 @@ RULES:
           valueInput.placeholder = "'Playfair Display', serif";
           css(valueInput, { width: '100%', boxSizing: 'border-box', padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '11px', fontFamily: 'monospace', marginBottom: '6px' });
 
-          // Row 3: action buttons
+          // Row 3: Google Fonts picker — fills in the value + auto-suggests a variable
+          // name. The <link> is injected on commit (doAdd), not on preview click.
+          let pickedFont = null;
+          const picker = makeGoogleFontPicker((font, value) => {
+            pickedFont = font;
+            valueInput.value = value;
+            if (!nameInput.value.trim()) {
+              nameInput.value = font.name.toLowerCase().replace(/ /g, '-');
+            }
+          });
+          css(picker, { marginBottom: '6px' });
+          // If the user types a custom value, the picked-font link is no longer
+          // accurate — clear the tracked pick so we don't inject an unused link.
+          valueInput.addEventListener('input', () => {
+            if (pickedFont && !valueInput.value.includes(pickedFont.name)) pickedFont = null;
+          });
+
+          // Row 4: action buttons
           const btnRow = el('div');
           css(btnRow, { display: 'flex', gap: '6px' });
 
@@ -2722,7 +3063,7 @@ RULES:
           css(cancelBtn, { padding: '3px 10px', background: 'none', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '11px', cursor: 'pointer', fontFamily: 'inherit' });
 
           btnRow.append(confirmBtn, cancelBtn);
-          form.append(nameRow, valueInput, btnRow);
+          form.append(nameRow, valueInput, picker, btnRow);
           section.appendChild(form);
           nameInput.focus();
 
@@ -2747,6 +3088,7 @@ RULES:
 
             addStyleVar(styleEl, varName, value);
             document.documentElement.style.setProperty(varName, value);
+            if (pickedFont) ensureGoogleFontLink(pickedFont);
             setDirty(true);
 
             form.remove();
@@ -2827,12 +3169,74 @@ RULES:
       input.type = 'text';
       input.value = trimmed;
       css(input, { width: '110px', padding: '3px 7px', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '11px', fontFamily: 'monospace' });
-      input.addEventListener('input', () => {
-        document.documentElement.style.setProperty(varName, input.value);
-        updateStyleVar(styleEl, varName, input.value);
+      const applyValue = val => {
+        input.value = val;
+        document.documentElement.style.setProperty(varName, val);
+        updateStyleVar(styleEl, varName, val);
         setDirty(true);
+      };
+      input.addEventListener('input', () => applyValue(input.value));
+
+      // Font variables get a picker toggle: "Aa" button opens a Google Fonts
+      // picker beneath the row. Excludes size / line-height / weight variables.
+      const isFontFamily = varName.includes('font') &&
+        !varName.includes('size') &&
+        !varName.includes('line-height') &&
+        !varName.includes('weight');
+
+      if (!isFontFamily) {
+        row.append(label, input);
+        return row;
+      }
+
+      // Wrapper holds the row + (when toggled open) the picker beneath.
+      // Row keeps its own marginBottom so rows stay spaced whether or not picker is open.
+      const wrapper = el('div');
+
+      const toggleBtn = el('button');
+      toggleBtn.textContent = 'Aa';
+      toggleBtn.title = 'Pick a Google Font';
+      css(toggleBtn, {
+        width: '26px',
+        height: '26px',
+        padding: '0',
+        border: '1px solid #d1d5db',
+        borderRadius: '4px',
+        background: '#fff',
+        cursor: 'pointer',
+        fontSize: '11px',
+        fontFamily: 'Georgia, serif',
+        fontWeight: '600',
+        color: '#374151',
+        flexShrink: '0',
       });
-      row.append(label, input);
+
+      // Narrow the value input so there's room for the toggle button
+      css(input, { width: '80px' });
+
+      row.append(label, input, toggleBtn);
+
+      let pickerEl = null;
+      toggleBtn.addEventListener('click', () => {
+        if (pickerEl) {
+          pickerEl.remove();
+          pickerEl = null;
+          toggleBtn.style.background = '#fff';
+          return;
+        }
+        toggleBtn.style.background = '#e5e7eb';
+        pickerEl = makeGoogleFontPicker((font, value) => {
+          applyValue(value);
+          ensureGoogleFontLink(font);
+          pickerEl.remove();
+          pickerEl = null;
+          toggleBtn.style.background = '#fff';
+        });
+        wrapper.appendChild(pickerEl);
+      });
+
+      wrapper.prepend(row);
+      return wrapper;
     }
 
     return row;
@@ -3792,8 +4196,8 @@ RULES:
     // loadPagesInventory is called inside initFileAccess when a handle is available.
     await initFileAccess();
 
-    // Baseline the nav state so the first auto-save doesn't spuriously sync.
-    lastSyncedNavHTML = getNavHTML();
+    // Baseline the shared state so the first auto-save doesn't spuriously sync.
+    lastSyncedSharedSnapshot = getSharedSnapshot();
   }
 
   if (document.readyState === 'loading') {

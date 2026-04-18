@@ -4,6 +4,8 @@ A zero-dependency, browser-based inline editing system for static websites.
 
 The site owner opens their HTML files locally, edits content in-place, and publishes directly to GitHub Pages — no terminal, no CMS, no backend required.
 
+Check it out at: [webby.swill.io](https://webby.swill.io)
+
 ---
 
 ## How it works
@@ -60,7 +62,7 @@ The editor activates automatically. You'll see a dark toolbar at the top of the 
 
 A banner will appear below the toolbar on first open. Click **Select Folder** and choose the folder containing your HTML files. The path is shown in the banner as a hint.
 
-Once linked, every edit auto-saves to your local files within 1.5 seconds — so changes are never lost on reload or restart. For multi-page sites, nav changes are automatically synced across all pages. The folder stays linked across sessions (one browser permission prompt per session).
+Once linked, every edit auto-saves to your local files within 1.5 seconds — so changes are never lost on reload or restart. For multi-page sites, changes to shared elements (nav, theme styles, fonts, favicon) are automatically synced across all pages. The folder stays linked across sessions (one browser permission prompt per session).
 
 ### 6. Edit your content
 
@@ -88,7 +90,10 @@ Hover the nav bar and click **⟳ Reformat Nav** to restructure it with AI. The 
 Click **Pages** in the toolbar to open the pages panel. From there you can navigate between pages, add new AI-generated pages, or delete pages. New page links are automatically added to the nav and synced across all pages.
 
 **Theme**
-Click **Theme** to adjust colours, fonts, spacing, favicon, page title, and meta description. All changes are live.
+Click **Theme** to adjust colours, fonts, spacing, favicon, page title, and meta description. All changes are live. For multi-page sites, colours/fonts/spacing/favicon are synced to every page automatically; page title, description, and keywords stay page-specific.
+
+**Google Fonts**
+In the Typography group, click **＋ Add font variable** to open a picker with ~50 popular Google Fonts. Existing font-family variables show an **Aa** button that opens the same picker. Selecting a font automatically injects the `<link>` into the page (and syncs it to all other pages).
 
 **Undo / Redo**
 The **↩** and **↪** buttons in the toolbar undo and redo structural changes (AI actions, section/page deletions). Keyboard shortcuts: `Ctrl+Z` / `Ctrl+Shift+Z`. Text edits use the browser's native undo.
@@ -183,7 +188,15 @@ Multi-page sites use a `webby-pages.json` manifest in the site folder alongside 
 
 Webby creates and maintains this file automatically. It is pushed to GitHub on every publish. If you add Webby to an existing single-page site, the manifest is created automatically the first time you link your folder.
 
-**Nav sync** — whenever the nav changes on any page (via Reformat Nav, Add Page, or Delete Page), the updated nav is written to every other page file on disk automatically, without any manual action.
+**Shared head + nav sync** — on every auto-save, Webby compares the current page's shared elements against a snapshot from the last sync. If anything changed, the updated elements are written to every other page file on disk automatically.
+
+Synced site-wide:
+- `<nav>` (including nav-specific CSS in `<style id="__webby-nav-styles">`)
+- Main `<style>` block (CSS variables + base styles edited via the Theme panel)
+- `<link rel="icon">` and `<link rel="apple-touch-icon">` (favicon)
+- Google Fonts `<link>`s (plus their preconnect links)
+
+Left page-specific: `<title>`, `<meta name="description">`, `<meta name="keywords">`.
 
 ---
 
@@ -198,7 +211,7 @@ https://swill.github.io/webby/webby.js
 
 **Pinned version** (recommended for production — immune to breaking changes):
 ```
-https://swill.github.io/webby/webby-1.1.0.js
+https://swill.github.io/webby/webby-1.2.0.js
 ```
 
 Pinned versioned files are committed alongside `webby.js` on each release and are never modified after publishing.
