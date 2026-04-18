@@ -11,6 +11,41 @@
 
   if (!window.SITE_SECRETS) return;
 
+  // ─── Theme ────────────────────────────────────────────────────────────────
+  // Mirrors the webby.swill.io site palette + typography so the editor UI
+  // feels stylistically consistent with the marketing site. These values are
+  // used only inside editor UI elements (toolbar, modals, panels) — they are
+  // never injected into the user's <head>, so the shared-head sync is unaffected.
+
+  const T = {
+    primary:   '#1a1b3a',  // deep navy — toolbar bg, headings, active states
+    secondary: '#d946ef',  // magenta — reformat accent
+    accent:    '#ff8c3c',  // orange — primary CTA (Publish, Submit)
+    accent2:   '#2dd4bf',  // teal — link/info accent
+    accent3:   '#fde047',  // yellow — highlights
+    accent4:   '#f472b6',  // pink
+    bg:        '#fdfbf5',  // cream — modal / panel bg
+    bgAlt:     '#f3ede0',  // warm cream — inputs, subtle surfaces
+    text:      '#1a1b3a',
+    textMuted: '#5a5d7a',
+    border:    'rgba(26, 27, 58, 0.12)',
+    borderSoft:'rgba(26, 27, 58, 0.07)',
+    danger:    '#e04a4a',
+    success:   '#10b981',
+
+    fontHead:  "'Fraunces', 'Playfair Display', Georgia, serif",
+    fontBody:  "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif",
+    fontMono:  "'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace",
+
+    radius:    '14px',
+    radiusSm:  '8px',
+    radiusPill:'999px',
+
+    shadow:    '0 20px 48px -16px rgba(26, 27, 58, 0.28)',
+    shadowSm:  '0 6px 18px -8px rgba(26, 27, 58, 0.25)',
+    shadowCta: '0 14px 32px -12px rgba(255, 140, 60, 0.55)',
+  };
+
   const { geminiKey, githubToken, repo, branch = 'main' } = window.SITE_SECRETS;
 
   // ─── State ────────────────────────────────────────────────────────────────
@@ -36,15 +71,16 @@
     Object.assign(msg.style, {
       position: 'fixed', inset: '0', zIndex: '9999999',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: 'rgba(18,18,31,0.92)', fontFamily: 'system-ui, sans-serif',
+      background: 'rgba(26, 27, 58, 0.85)', fontFamily: T.fontBody,
+      padding: '20px', boxSizing: 'border-box',
     });
     msg.innerHTML = `
-      <div style="background:#fff;border-radius:12px;padding:32px 36px;max-width:420px;text-align:center;box-shadow:0 16px 48px rgba(0,0,0,0.3);">
-        <div style="font-size:32px;margin-bottom:12px;">🌐</div>
-        <h2 style="margin:0 0 10px;font-size:17px;color:#111;">Unsupported Browser</h2>
-        <p style="margin:0 0 20px;font-size:14px;color:#555;line-height:1.6;">
+      <div style="background:${T.bg};border-radius:${T.radius};padding:34px 38px;max-width:440px;text-align:center;box-shadow:${T.shadow};font-family:${T.fontBody};">
+        <div style="font-size:36px;margin-bottom:14px;">🌐</div>
+        <h2 style="margin:0 0 10px;font-size:22px;color:${T.primary};font-family:${T.fontHead};font-weight:600;letter-spacing:-0.02em;">Unsupported Browser</h2>
+        <p style="margin:0;font-size:14px;color:${T.textMuted};line-height:1.6;">
           Webby requires access to the local file system and works in
-          <strong>Chrome</strong> and <strong>Edge</strong>.<br><br>
+          <strong style="color:${T.primary}">Chrome</strong> and <strong style="color:${T.primary}">Edge</strong>.<br><br>
           Please open this page in Chrome or Edge to use the editor.
         </p>
       </div>`;
@@ -76,23 +112,51 @@
       zIndex: '999999',
       display: 'flex',
       alignItems: 'center',
-      gap: '8px',
-      padding: '0 16px',
+      gap: '6px',
+      padding: '0 18px',
       height: '44px',
-      background: '#12121f',
-      color: '#e8e8f0',
-      fontFamily: 'system-ui, -apple-system, sans-serif',
+      background: T.primary,
+      color: T.bg,
+      fontFamily: T.fontBody,
       fontSize: '13px',
-      boxShadow: '0 2px 12px rgba(0,0,0,0.4)',
+      boxShadow: '0 8px 24px -10px rgba(26, 27, 58, 0.35)',
       boxSizing: 'border-box',
+      borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+    });
+
+    // Little gradient "W" mark — echoes the site nav logo
+    const logo = el('span', { 'data-editor-ui': '' });
+    logo.textContent = 'W';
+    css(logo, {
+      width: '26px', height: '26px',
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      borderRadius: '8px',
+      fontFamily: T.fontHead, fontWeight: '700', fontSize: '14px',
+      color: T.primary,
+      background: `linear-gradient(135deg, ${T.accent} 0%, ${T.secondary} 55%, ${T.accent2} 100%)`,
+      boxShadow: '0 6px 14px -6px rgba(217, 70, 239, 0.6)',
+      marginRight: '4px',
+      flexShrink: '0',
     });
 
     const title = el('span', { id: '__webby-title' });
     title.textContent = document.title || 'Site Editor';
-    css(title, { fontWeight: '600', fontSize: '13px', letterSpacing: '0.01em' });
+    css(title, {
+      fontFamily: T.fontHead,
+      fontWeight: '500',
+      fontSize: '15px',
+      letterSpacing: '-0.01em',
+      color: T.bg,
+    });
 
     const status = el('span', { id: '__webby-status' });
-    css(status, { fontSize: '11px', opacity: '0.65', marginLeft: '4px' });
+    css(status, {
+      fontSize: '11.5px',
+      opacity: '0.7',
+      marginLeft: '6px',
+      letterSpacing: '0.01em',
+      fontStyle: 'italic',
+    });
 
     const spacer = el('div');
     css(spacer, { flex: '1' });
@@ -122,7 +186,7 @@
     exportBtn.addEventListener('click', exportToFile);
     publishBtn.addEventListener('click', publishSite);
 
-    bar.append(title, spacer, status, undoBtn, redoBtn, pagesBtn, themeBtn, exportBtn, publishBtn);
+    bar.append(logo, title, spacer, status, undoBtn, redoBtn, pagesBtn, themeBtn, exportBtn, publishBtn);
     document.body.prepend(bar);
 
     // Push body content down so toolbar doesn't overlap
@@ -143,21 +207,38 @@
     const btn = el('button', { 'data-editor-ui': '' });
     btn.textContent = label;
     css(btn, {
-      padding: '5px 13px',
-      border: primary ? 'none' : '1px solid rgba(255,255,255,0.2)',
-      borderRadius: '5px',
-      background: primary ? '#3b82f6' : 'transparent',
-      color: '#fff',
+      padding: '6px 15px',
+      border: primary ? '2px solid transparent' : '1.5px solid rgba(253, 251, 245, 0.22)',
+      borderRadius: T.radiusPill,
+      background: primary ? T.accent : 'transparent',
+      color: primary ? T.primary : T.bg,
       cursor: 'pointer',
-      fontSize: '12px',
-      fontFamily: 'inherit',
-      fontWeight: primary ? '600' : '400',
-      transition: 'background 0.15s',
+      fontSize: '12.5px',
+      fontFamily: T.fontBody,
+      fontWeight: primary ? '600' : '500',
+      letterSpacing: '-0.005em',
+      lineHeight: '1',
+      boxShadow: primary ? T.shadowCta : 'none',
+      transition: 'background 0.18s ease, color 0.18s ease, border-color 0.18s ease, transform 0.18s ease',
     });
-    const hoverBg = primary ? '#2563eb' : 'rgba(255,255,255,0.1)';
-    const baseBg = primary ? '#3b82f6' : 'transparent';
-    btn.addEventListener('mouseenter', () => { btn.style.background = hoverBg; });
-    btn.addEventListener('mouseleave', () => { btn.style.background = baseBg; });
+    btn.addEventListener('mouseenter', () => {
+      if (primary) {
+        btn.style.background = T.accent3;
+        btn.style.transform = 'translateY(-1px)';
+      } else {
+        btn.style.background = 'rgba(253, 251, 245, 0.12)';
+        btn.style.borderColor = 'rgba(253, 251, 245, 0.4)';
+      }
+    });
+    btn.addEventListener('mouseleave', () => {
+      if (primary) {
+        btn.style.background = T.accent;
+        btn.style.transform = 'translateY(0)';
+      } else {
+        btn.style.background = 'transparent';
+        btn.style.borderColor = 'rgba(253, 251, 245, 0.22)';
+      }
+    });
     return btn;
   }
 
@@ -165,13 +246,13 @@
     const statusEl = document.getElementById('__webby-status');
     if (!statusEl) return;
     statusEl.textContent = msg;
-    statusEl.style.color = isError ? '#f87171' : '#86efac';
+    statusEl.style.color = isError ? T.accent4 : T.accent3;
     statusEl.style.opacity = '1';
     clearTimeout(statusTimer);
     if (!isError) {
       statusTimer = setTimeout(() => {
         statusEl.textContent = '';
-        statusEl.style.opacity = '0.65';
+        statusEl.style.opacity = '0.7';
       }, 4000);
     }
   }
@@ -329,11 +410,11 @@
       position: 'fixed',
       inset: '0',
       zIndex: '9999999',
-      background: 'rgba(18,18,31,0.92)',
+      background: 'rgba(26, 27, 58, 0.88)',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      fontFamily: 'system-ui, sans-serif',
+      fontFamily: T.fontBody,
       padding: '20px',
       boxSizing: 'border-box',
     });
@@ -342,35 +423,42 @@
       ? decodeURIComponent(location.pathname.substring(0, location.pathname.lastIndexOf('/')))
       : null;
     const hintHtml = hintPath
-      ? `<div style="margin-top:14px;background:#f3f4f6;padding:8px 12px;border-radius:6px;font-family:monospace;font-size:12px;color:#374151;word-break:break-all;">${hintPath}</div>`
+      ? `<div style="margin-top:16px;background:${T.bgAlt};padding:10px 14px;border-radius:${T.radiusSm};font-family:${T.fontMono};font-size:12px;color:${T.primary};word-break:break-all;border:1px solid ${T.borderSoft};">${hintPath}</div>`
       : '';
 
     const modal = el('div');
     css(modal, {
-      background: '#fff',
-      borderRadius: '12px',
-      padding: '32px 36px',
+      background: T.bg,
+      borderRadius: T.radius,
+      padding: '36px 38px',
       maxWidth: '480px',
       width: '100%',
       textAlign: 'center',
-      boxShadow: '0 16px 48px rgba(0,0,0,0.35)',
+      boxShadow: T.shadow,
       boxSizing: 'border-box',
+      fontFamily: T.fontBody,
+      position: 'relative',
+      overflow: 'hidden',
     });
 
     modal.innerHTML = `
-      <div style="font-size:36px;margin-bottom:14px;">💾</div>
-      <h2 style="margin:0 0 10px;font-size:18px;color:#111;">Folder access required</h2>
-      <p style="margin:0 0 8px;font-size:14px;color:#555;line-height:1.6;">
+      <div style="position:absolute;top:0;left:0;right:0;height:5px;background:linear-gradient(90deg, ${T.accent}, ${T.secondary} 50%, ${T.accent2});"></div>
+      <div style="font-size:38px;margin-bottom:14px;">💾</div>
+      <h2 style="margin:0 0 10px;font-size:22px;color:${T.primary};font-family:${T.fontHead};font-weight:600;letter-spacing:-0.02em;line-height:1.15;">Folder access required</h2>
+      <p style="margin:0;font-size:14px;color:${T.textMuted};line-height:1.6;">
         Webby needs write access to your site folder so edits save directly to your files.
         Without this permission, the editor cannot save your changes.
       </p>
       ${hintHtml}
       <button id="__webby-banner-grant"
-        style="margin-top:22px;background:#3b82f6;color:#fff;border:none;font-weight:600;padding:10px 22px;border-radius:6px;cursor:pointer;font-size:14px;font-family:inherit;">
+        style="margin-top:22px;background:${T.accent};color:${T.primary};border:2px solid transparent;font-weight:600;padding:11px 26px;border-radius:${T.radiusPill};cursor:pointer;font-size:14px;font-family:${T.fontBody};box-shadow:${T.shadowCta};letter-spacing:-0.005em;transition:transform 0.2s ease, background 0.2s ease;">
         Select Folder
       </button>
-      <div id="__webby-banner-error" style="margin-top:12px;font-size:12px;color:#ef4444;min-height:16px;"></div>
+      <div id="__webby-banner-error" style="margin-top:14px;font-size:12.5px;color:${T.danger};min-height:16px;"></div>
     `;
+    const grantBtn = modal.querySelector('#__webby-banner-grant');
+    grantBtn.addEventListener('mouseenter', () => { grantBtn.style.background = T.accent3; grantBtn.style.transform = 'translateY(-2px)'; });
+    grantBtn.addEventListener('mouseleave', () => { grantBtn.style.background = T.accent; grantBtn.style.transform = 'translateY(0)'; });
 
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
@@ -702,15 +790,19 @@
       top: '60px',
       right: '10px',
       zIndex: '1000',
-      padding: '4px 9px',
-      background: 'rgba(239,68,68,0.88)',
+      padding: '5px 12px',
+      background: T.accent4,
       color: '#fff',
       border: 'none',
-      borderRadius: '4px',
+      borderRadius: T.radiusPill,
       cursor: 'pointer',
       fontSize: '11px',
+      fontFamily: T.fontBody,
+      fontWeight: '600',
+      letterSpacing: '-0.005em',
+      boxShadow: '0 6px 14px -6px rgba(244, 114, 182, 0.55)',
       opacity: '0',
-      transition: 'opacity 0.15s',
+      transition: 'opacity 0.18s ease, transform 0.18s ease, background 0.18s ease',
       pointerEvents: 'none',
     });
 
@@ -725,12 +817,16 @@
 
     // Highlight the section outline while hovering the delete button
     btn.addEventListener('mouseenter', () => {
-      section.style.outline = '2px solid rgba(239,68,68,0.6)';
+      section.style.outline = `2px dashed ${T.accent4}`;
       section.style.outlineOffset = '-2px';
+      btn.style.background = T.danger;
+      btn.style.transform = 'translateY(-1px)';
     });
     btn.addEventListener('mouseleave', () => {
       section.style.outline = '';
       section.style.outlineOffset = '';
+      btn.style.background = T.accent4;
+      btn.style.transform = 'translateY(0)';
     });
 
     btn.addEventListener('click', e => {
@@ -764,17 +860,21 @@
     css(btn, {
       position: 'absolute',
       top: '60px',
-      right: '130px',
+      right: '160px',
       zIndex: '1000',
-      padding: '4px 9px',
-      background: 'rgba(59,130,246,0.88)',
+      padding: '5px 12px',
+      background: T.secondary,
       color: '#fff',
       border: 'none',
-      borderRadius: '4px',
+      borderRadius: T.radiusPill,
       cursor: 'pointer',
       fontSize: '11px',
+      fontFamily: T.fontBody,
+      fontWeight: '600',
+      letterSpacing: '-0.005em',
+      boxShadow: '0 6px 14px -6px rgba(217, 70, 239, 0.5)',
       opacity: '0',
-      transition: 'opacity 0.15s',
+      transition: 'opacity 0.18s ease, transform 0.18s ease',
       pointerEvents: 'none',
     });
 
@@ -789,12 +889,14 @@
 
     // Highlight the section outline while hovering the reformat button
     btn.addEventListener('mouseenter', () => {
-      section.style.outline = '2px solid rgba(59,130,246,0.6)';
+      section.style.outline = `2px dashed ${T.secondary}`;
       section.style.outlineOffset = '-2px';
+      btn.style.transform = 'translateY(-1px)';
     });
     btn.addEventListener('mouseleave', () => {
       section.style.outline = '';
       section.style.outlineOffset = '';
+      btn.style.transform = 'translateY(0)';
     });
 
     btn.addEventListener('click', e => {
@@ -812,46 +914,54 @@
     css(overlay, {
       position: 'fixed',
       inset: '0',
-      background: 'rgba(0,0,0,0.55)',
+      background: 'rgba(26, 27, 58, 0.65)',
       zIndex: '1000000',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
+      fontFamily: T.fontBody,
     });
 
     const modal = el('div');
     css(modal, {
-      background: '#fff',
-      borderRadius: '10px',
-      padding: '28px',
-      width: '500px',
+      background: T.bg,
+      borderRadius: T.radius,
+      padding: '30px 32px',
+      width: '520px',
       maxWidth: '92vw',
-      fontFamily: 'system-ui, sans-serif',
-      boxShadow: '0 16px 48px rgba(0,0,0,0.25)',
+      fontFamily: T.fontBody,
+      boxShadow: T.shadow,
+      position: 'relative',
+      overflow: 'hidden',
+      borderTop: `5px solid ${T.secondary}`,
     });
 
     modal.innerHTML = `
-      <h3 style="margin:0 0 6px;font-size:16px;color:#111;font-weight:700">Reformat: ${label}</h3>
-      <p style="margin:0 0 16px;font-size:13px;color:#666;line-height:1.5">
+      <h3 style="margin:0 0 6px;font-size:22px;color:${T.primary};font-family:${T.fontHead};font-weight:600;letter-spacing:-0.02em;line-height:1.15">Reformat <span style="color:${T.secondary};font-style:italic">${label}</span></h3>
+      <p style="margin:0 0 18px;font-size:13.5px;color:${T.textMuted};line-height:1.55">
         Describe how you want the layout or structure changed. Content (text, images) will not be changed unless you ask.
       </p>
       <textarea
         id="__webby-reformat-desc"
-        placeholder="e.g. Remove the section title and add a third box to the right of the other two.  Add a centered button at the bottom of each box."
-        style="width:100%;height:96px;padding:10px 12px;border:1px solid #ddd;border-radius:6px;
-               font-size:13px;font-family:inherit;resize:vertical;box-sizing:border-box;
-               line-height:1.5;outline:none;transition:border-color 0.15s;"
+        placeholder="e.g. Remove the section title and add a third box to the right of the other two. Add a centered button at the bottom of each box."
+        style="width:100%;height:104px;padding:12px 14px;border:1.5px solid ${T.border};border-radius:${T.radiusSm};
+               font-size:13.5px;font-family:${T.fontBody};resize:vertical;box-sizing:border-box;
+               line-height:1.55;outline:none;background:#fff;color:${T.primary};
+               transition:border-color 0.18s ease, box-shadow 0.18s ease;"
       ></textarea>
-      <p id="__webby-reformat-error" style="display:none;margin:8px 0 0;font-size:12px;color:#ef4444;"></p>
-      <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
+      <p id="__webby-reformat-error" style="display:none;margin:10px 0 0;font-size:12.5px;color:${T.danger};"></p>
+      <div style="display:flex;gap:10px;margin-top:20px;justify-content:flex-end">
         <button id="__webby-reformat-cancel"
-          style="padding:8px 16px;border:1px solid #ddd;background:#fff;border-radius:6px;
-                 cursor:pointer;font-size:13px;font-family:inherit;color:#444;">
+          style="padding:9px 20px;border:1.5px solid ${T.border};background:transparent;border-radius:${T.radiusPill};
+                 cursor:pointer;font-size:13px;font-family:${T.fontBody};font-weight:500;color:${T.primary};
+                 transition:background 0.18s ease, border-color 0.18s ease;">
           Cancel
         </button>
         <button id="__webby-reformat-submit"
-          style="padding:8px 18px;background:#3b82f6;color:#fff;border:none;border-radius:6px;
-                 cursor:pointer;font-size:13px;font-weight:600;font-family:inherit;transition:background 0.15s;">
+          style="padding:9px 22px;background:${T.accent};color:${T.primary};border:2px solid transparent;
+                 border-radius:${T.radiusPill};cursor:pointer;font-size:13px;font-weight:600;
+                 font-family:${T.fontBody};letter-spacing:-0.005em;box-shadow:${T.shadowCta};
+                 transition:background 0.18s ease, transform 0.18s ease;">
           Reformat with AI
         </button>
       </div>
@@ -866,10 +976,18 @@
     const cancelBtn = modal.querySelector('#__webby-reformat-cancel');
 
     textarea.focus();
-    textarea.addEventListener('focus', () => { textarea.style.borderColor = '#3b82f6'; });
-    textarea.addEventListener('blur', () => { textarea.style.borderColor = '#ddd'; });
-    submitBtn.addEventListener('mouseenter', () => { submitBtn.style.background = '#2563eb'; });
-    submitBtn.addEventListener('mouseleave', () => { submitBtn.style.background = '#3b82f6'; });
+    textarea.addEventListener('focus', () => {
+      textarea.style.borderColor = T.secondary;
+      textarea.style.boxShadow = '0 0 0 3px rgba(217, 70, 239, 0.12)';
+    });
+    textarea.addEventListener('blur', () => {
+      textarea.style.borderColor = T.border;
+      textarea.style.boxShadow = 'none';
+    });
+    submitBtn.addEventListener('mouseenter', () => { submitBtn.style.background = T.accent3; submitBtn.style.transform = 'translateY(-2px)'; });
+    submitBtn.addEventListener('mouseleave', () => { submitBtn.style.background = T.accent; submitBtn.style.transform = 'translateY(0)'; });
+    cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = T.bgAlt; });
+    cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.background = 'transparent'; });
 
     let sectionPending = false;
     const close = () => { if (!sectionPending) overlay.remove(); };
@@ -1000,18 +1118,22 @@ RULES:
     btn.textContent = '⟳ Reformat Nav';
     css(btn, {
       position: 'absolute',
-      top: '4px',
-      right: '4px',
+      top: '6px',
+      right: '6px',
       zIndex: '1000',
-      padding: '4px 9px',
-      background: 'rgba(59,130,246,0.88)',
+      padding: '5px 12px',
+      background: T.secondary,
       color: '#fff',
       border: 'none',
-      borderRadius: '4px',
+      borderRadius: T.radiusPill,
       cursor: 'pointer',
       fontSize: '11px',
+      fontFamily: T.fontBody,
+      fontWeight: '600',
+      letterSpacing: '-0.005em',
+      boxShadow: '0 6px 14px -6px rgba(217, 70, 239, 0.5)',
       opacity: '0',
-      transition: 'opacity 0.15s',
+      transition: 'opacity 0.18s ease, transform 0.18s ease',
       pointerEvents: 'none',
     });
 
@@ -1025,12 +1147,14 @@ RULES:
     });
 
     btn.addEventListener('mouseenter', () => {
-      nav.style.outline = '2px solid rgba(59,130,246,0.6)';
+      nav.style.outline = `2px dashed ${T.secondary}`;
       nav.style.outlineOffset = '-2px';
+      btn.style.transform = 'translateY(-1px)';
     });
     btn.addEventListener('mouseleave', () => {
       nav.style.outline = '';
       nav.style.outlineOffset = '';
+      btn.style.transform = 'translateY(0)';
     });
 
     btn.addEventListener('click', e => {
@@ -1049,35 +1173,59 @@ RULES:
     css(overlay, {
       position: 'fixed',
       inset: '0',
-      background: 'rgba(0,0,0,0.55)',
+      background: 'rgba(26, 27, 58, 0.65)',
       zIndex: '1000000',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
+      fontFamily: T.fontBody,
     });
 
-    overlay.innerHTML = `
-      <div style="background:#fff;border-radius:10px;padding:28px 24px;width:480px;max-width:94vw;box-shadow:0 16px 48px rgba(0,0,0,0.22);font-family:system-ui,sans-serif;">
-        <h3 style="margin:0 0 6px;font-size:16px;color:#111;font-weight:700">Reformat: Navigation</h3>
-        <p style="margin:0 0 14px;font-size:13px;color:#555;">Describe how to restructure the navigation. Links and labels are preserved unless you ask to change them.</p>
-        <textarea
-          id="__webby-reformat-nav-desc"
-          placeholder="e.g. Make it a sticky horizontal bar with the logo on the left and links on the right, with a hamburger menu on mobile"
-          style="width:100%;box-sizing:border-box;height:90px;padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;font-family:inherit;resize:vertical;outline:none;"
-        ></textarea>
-        <p id="__webby-reformat-nav-error" style="display:none;margin:8px 0 0;font-size:12px;color:#ef4444;"></p>
-        <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
-          <button id="__webby-reformat-nav-cancel"
-            style="padding:7px 16px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer;font-size:13px;font-family:inherit;">
-            Cancel
-          </button>
-          <button id="__webby-reformat-nav-submit"
-            style="padding:7px 16px;border:none;border-radius:6px;background:#3b82f6;color:#fff;cursor:pointer;font-size:13px;font-family:inherit;font-weight:600;">
-            Reformat with AI
-          </button>
-        </div>
+    const modal = el('div');
+    css(modal, {
+      background: T.bg,
+      borderRadius: T.radius,
+      padding: '30px 32px',
+      width: '500px',
+      maxWidth: '92vw',
+      fontFamily: T.fontBody,
+      boxShadow: T.shadow,
+      position: 'relative',
+      overflow: 'hidden',
+      borderTop: `5px solid ${T.secondary}`,
+    });
+
+    modal.innerHTML = `
+      <h3 style="margin:0 0 6px;font-size:22px;color:${T.primary};font-family:${T.fontHead};font-weight:600;letter-spacing:-0.02em;line-height:1.15">Reformat <span style="color:${T.secondary};font-style:italic">Navigation</span></h3>
+      <p style="margin:0 0 18px;font-size:13.5px;color:${T.textMuted};line-height:1.55">
+        Describe how to restructure the navigation. Links and labels are preserved unless you ask to change them.
+      </p>
+      <textarea
+        id="__webby-reformat-nav-desc"
+        placeholder="e.g. Make it a sticky horizontal bar with the logo on the left and links on the right, with a hamburger menu on mobile"
+        style="width:100%;height:100px;padding:12px 14px;border:1.5px solid ${T.border};border-radius:${T.radiusSm};
+               font-size:13.5px;font-family:${T.fontBody};resize:vertical;box-sizing:border-box;
+               line-height:1.55;outline:none;background:#fff;color:${T.primary};
+               transition:border-color 0.18s ease, box-shadow 0.18s ease;"
+      ></textarea>
+      <p id="__webby-reformat-nav-error" style="display:none;margin:10px 0 0;font-size:12.5px;color:${T.danger};"></p>
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:20px;">
+        <button id="__webby-reformat-nav-cancel"
+          style="padding:9px 20px;border:1.5px solid ${T.border};background:transparent;border-radius:${T.radiusPill};
+                 cursor:pointer;font-size:13px;font-family:${T.fontBody};font-weight:500;color:${T.primary};
+                 transition:background 0.18s ease, border-color 0.18s ease;">
+          Cancel
+        </button>
+        <button id="__webby-reformat-nav-submit"
+          style="padding:9px 22px;background:${T.accent};color:${T.primary};border:2px solid transparent;
+                 border-radius:${T.radiusPill};cursor:pointer;font-size:13px;font-weight:600;
+                 font-family:${T.fontBody};letter-spacing:-0.005em;box-shadow:${T.shadowCta};
+                 transition:background 0.18s ease, transform 0.18s ease;">
+          Reformat with AI
+        </button>
       </div>`;
 
+    overlay.appendChild(modal);
     document.body.appendChild(overlay);
 
     const textarea = overlay.querySelector('#__webby-reformat-nav-desc');
@@ -1086,6 +1234,19 @@ RULES:
     const cancelBtn = overlay.querySelector('#__webby-reformat-nav-cancel');
 
     setTimeout(() => textarea.focus(), 50);
+
+    textarea.addEventListener('focus', () => {
+      textarea.style.borderColor = T.secondary;
+      textarea.style.boxShadow = '0 0 0 3px rgba(217, 70, 239, 0.12)';
+    });
+    textarea.addEventListener('blur', () => {
+      textarea.style.borderColor = T.border;
+      textarea.style.boxShadow = 'none';
+    });
+    submitBtn.addEventListener('mouseenter', () => { submitBtn.style.background = T.accent3; submitBtn.style.transform = 'translateY(-2px)'; });
+    submitBtn.addEventListener('mouseleave', () => { submitBtn.style.background = T.accent; submitBtn.style.transform = 'translateY(0)'; });
+    cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = T.bgAlt; });
+    cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.background = 'transparent'; });
 
     textarea.addEventListener('keydown', e => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') submitBtn.click();
@@ -1246,19 +1407,32 @@ RULES:
     const btn = el('button');
     btn.textContent = '+ Add Section';
     css(btn, {
-      padding: '4px 16px',
-      background: 'rgba(18,18,31,0.75)',
-      color: '#e8e8f0',
-      border: '1px dashed rgba(255,255,255,0.35)',
-      borderRadius: '20px',
+      padding: '6px 18px',
+      background: 'rgba(26, 27, 58, 0.82)',
+      color: T.bg,
+      border: `1.5px dashed ${T.accent3}`,
+      borderRadius: T.radiusPill,
       cursor: 'pointer',
-      fontSize: '11px',
-      fontFamily: 'system-ui, sans-serif',
-      backdropFilter: 'blur(4px)',
-      transition: 'background 0.15s',
+      fontSize: '11.5px',
+      fontFamily: T.fontBody,
+      fontWeight: '600',
+      letterSpacing: '-0.005em',
+      backdropFilter: 'blur(6px)',
+      boxShadow: '0 10px 22px -12px rgba(26, 27, 58, 0.4)',
+      transition: 'background 0.18s ease, border-color 0.18s ease, transform 0.18s ease',
     });
-    btn.addEventListener('mouseenter', () => { btn.style.background = 'rgba(59,130,246,0.8)'; btn.style.borderColor = 'transparent'; });
-    btn.addEventListener('mouseleave', () => { btn.style.background = 'rgba(18,18,31,0.75)'; btn.style.borderColor = 'rgba(255,255,255,0.35)'; });
+    btn.addEventListener('mouseenter', () => {
+      btn.style.background = T.accent;
+      btn.style.color = T.primary;
+      btn.style.borderColor = 'transparent';
+      btn.style.transform = 'translateY(-1px)';
+    });
+    btn.addEventListener('mouseleave', () => {
+      btn.style.background = 'rgba(26, 27, 58, 0.82)';
+      btn.style.color = T.bg;
+      btn.style.borderColor = T.accent3;
+      btn.style.transform = 'translateY(0)';
+    });
     btn.addEventListener('click', () => promptAddSection(insertAfterZone));
     wrap.appendChild(btn);
 
@@ -1306,36 +1480,40 @@ RULES:
       top: '44px',
       right: '0',
       bottom: '0',
-      width: '270px',
-      background: '#fff',
-      borderLeft: '1px solid #e5e7eb',
+      width: '290px',
+      background: T.bg,
+      borderLeft: `1px solid ${T.border}`,
       zIndex: '999998',
-      fontFamily: 'system-ui, sans-serif',
-      fontSize: '12px',
-      boxShadow: '-4px 0 20px rgba(0,0,0,0.1)',
+      fontFamily: T.fontBody,
+      fontSize: '13px',
+      boxShadow: '-8px 0 28px -8px rgba(26, 27, 58, 0.18)',
       display: 'flex',
       flexDirection: 'column',
+      color: T.primary,
     });
 
     const header = el('div');
     css(header, {
-      padding: '12px 16px',
-      borderBottom: '1px solid #e5e7eb',
+      padding: '16px 18px 14px',
+      borderBottom: `1px solid ${T.borderSoft}`,
       display: 'flex',
       justifyContent: 'space-between',
       alignItems: 'center',
       position: 'sticky',
       top: '0',
-      background: '#fff',
+      background: T.bg,
       zIndex: '1',
       flexShrink: '0',
     });
-    header.innerHTML = `<strong style="font-size:13px;color:#111">Pages</strong>
-      <button id="__webby-pages-close" style="background:none;border:none;cursor:pointer;font-size:18px;color:#9ca3af;line-height:1;">&times;</button>`;
-    header.querySelector('#__webby-pages-close').addEventListener('click', () => panel.remove());
+    header.innerHTML = `<strong style="font-size:17px;color:${T.primary};font-family:${T.fontHead};font-weight:600;letter-spacing:-0.015em">Pages</strong>
+      <button id="__webby-pages-close" style="background:none;border:none;cursor:pointer;font-size:20px;color:${T.textMuted};line-height:1;padding:0 4px;transition:color 0.15s;">&times;</button>`;
+    const closeBtn = header.querySelector('#__webby-pages-close');
+    closeBtn.addEventListener('mouseenter', () => { closeBtn.style.color = T.primary; });
+    closeBtn.addEventListener('mouseleave', () => { closeBtn.style.color = T.textMuted; });
+    closeBtn.addEventListener('click', () => panel.remove());
 
     const list = el('div');
-    css(list, { flex: '1', padding: '12px 16px', overflowY: 'auto' });
+    css(list, { flex: '1', padding: '10px 18px', overflowY: 'auto' });
 
     pagesInventory.pages.forEach(page => {
       const row = el('div');
@@ -1343,8 +1521,8 @@ RULES:
         display: 'flex',
         alignItems: 'center',
         gap: '8px',
-        padding: '9px 0',
-        borderBottom: '1px solid #f3f4f6',
+        padding: '11px 0',
+        borderBottom: `1px solid ${T.borderSoft}`,
       });
 
       const isCurrent = page.file === CURRENT_FILENAME;
@@ -1354,9 +1532,10 @@ RULES:
       const nameEl = el('div');
       nameEl.textContent = page.navLabel || page.title || page.file;
       css(nameEl, {
-        fontWeight: isCurrent ? '700' : '500',
-        fontSize: '12px',
-        color: isCurrent ? '#3b82f6' : '#111',
+        fontWeight: isCurrent ? '600' : '500',
+        fontSize: '13px',
+        color: isCurrent ? T.secondary : T.primary,
+        fontStyle: isCurrent ? 'italic' : 'normal',
         whiteSpace: 'nowrap',
         overflow: 'hidden',
         textOverflow: 'ellipsis',
@@ -1364,7 +1543,7 @@ RULES:
 
       const fileEl = el('div');
       fileEl.textContent = page.file + (isCurrent ? ' — current' : '');
-      css(fileEl, { fontSize: '10px', color: '#9ca3af', marginTop: '1px' });
+      css(fileEl, { fontSize: '10.5px', color: T.textMuted, marginTop: '2px', fontFamily: T.fontMono });
 
       info.append(nameEl, fileEl);
       row.append(info);
@@ -1374,32 +1553,40 @@ RULES:
         openBtn.textContent = 'Open →';
         openBtn.href = './' + page.file;
         css(openBtn, {
-          fontSize: '11px',
-          color: '#3b82f6',
+          fontSize: '11.5px',
+          color: T.primary,
           textDecoration: 'none',
           flexShrink: '0',
-          padding: '3px 8px',
-          borderRadius: '4px',
-          background: 'rgba(59,130,246,0.08)',
+          padding: '5px 11px',
+          borderRadius: T.radiusPill,
+          background: T.bgAlt,
+          border: `1px solid ${T.borderSoft}`,
           whiteSpace: 'nowrap',
+          fontWeight: '500',
+          transition: 'background 0.15s, border-color 0.15s',
         });
+        openBtn.addEventListener('mouseenter', () => { openBtn.style.background = T.accent3; openBtn.style.borderColor = 'transparent'; });
+        openBtn.addEventListener('mouseleave', () => { openBtn.style.background = T.bgAlt; openBtn.style.borderColor = T.borderSoft; });
 
         const delBtn = el('button');
         delBtn.textContent = '✕';
         delBtn.title = 'Delete page';
         css(delBtn, {
           flexShrink: '0',
-          padding: '3px 7px',
+          width: '26px',
+          height: '26px',
+          padding: '0',
           background: 'transparent',
-          border: '1px solid rgba(239,68,68,0.4)',
-          borderRadius: '4px',
-          color: '#ef4444',
+          border: `1px solid ${T.borderSoft}`,
+          borderRadius: '50%',
+          color: T.textMuted,
           cursor: 'pointer',
           fontSize: '11px',
-          fontFamily: 'inherit',
+          fontFamily: T.fontBody,
+          transition: 'background 0.15s, color 0.15s, border-color 0.15s',
         });
-        delBtn.addEventListener('mouseenter', () => { delBtn.style.background = 'rgba(239,68,68,0.08)'; });
-        delBtn.addEventListener('mouseleave', () => { delBtn.style.background = 'transparent'; });
+        delBtn.addEventListener('mouseenter', () => { delBtn.style.background = T.accent4; delBtn.style.color = '#fff'; delBtn.style.borderColor = 'transparent'; });
+        delBtn.addEventListener('mouseleave', () => { delBtn.style.background = 'transparent'; delBtn.style.color = T.textMuted; delBtn.style.borderColor = T.borderSoft; });
         delBtn.addEventListener('click', async () => {
           const label = page.navLabel || page.title || page.file;
           if (!confirm(`Delete "${label}" (${page.file})?\n\nThis will remove the page and all nav links pointing to it. This cannot be undone.`)) return;
@@ -1415,9 +1602,9 @@ RULES:
 
     const footer = el('div');
     css(footer, {
-      padding: '12px 16px',
-      borderTop: '1px solid #e5e7eb',
-      background: '#fff',
+      padding: '14px 18px 18px',
+      borderTop: `1px solid ${T.borderSoft}`,
+      background: T.bg,
       flexShrink: '0',
     });
 
@@ -1425,19 +1612,22 @@ RULES:
     addBtn.textContent = '+ Add Page';
     css(addBtn, {
       width: '100%',
-      padding: '8px',
-      background: dirHandle ? '#3b82f6' : '#e5e7eb',
-      color: dirHandle ? '#fff' : '#9ca3af',
-      border: 'none',
-      borderRadius: '6px',
+      padding: '10px',
+      background: dirHandle ? T.accent : T.bgAlt,
+      color: dirHandle ? T.primary : T.textMuted,
+      border: `2px solid transparent`,
+      borderRadius: T.radiusPill,
       cursor: dirHandle ? 'pointer' : 'default',
-      fontSize: '12px',
+      fontSize: '13px',
       fontWeight: '600',
-      fontFamily: 'inherit',
+      fontFamily: T.fontBody,
+      letterSpacing: '-0.005em',
+      boxShadow: dirHandle ? T.shadowCta : 'none',
+      transition: 'background 0.18s ease, transform 0.18s ease',
     });
     if (dirHandle) {
-      addBtn.addEventListener('mouseenter', () => { addBtn.style.background = '#2563eb'; });
-      addBtn.addEventListener('mouseleave', () => { addBtn.style.background = '#3b82f6'; });
+      addBtn.addEventListener('mouseenter', () => { addBtn.style.background = T.accent3; addBtn.style.transform = 'translateY(-2px)'; });
+      addBtn.addEventListener('mouseleave', () => { addBtn.style.background = T.accent; addBtn.style.transform = 'translateY(0)'; });
       addBtn.addEventListener('click', () => { panel.remove(); promptAddPage(); });
     }
     footer.appendChild(addBtn);
@@ -1445,7 +1635,7 @@ RULES:
     if (!dirHandle) {
       const note = el('div');
       note.textContent = 'Link your site folder to add pages.';
-      css(note, { fontSize: '11px', color: '#9ca3af', marginTop: '6px', textAlign: 'center' });
+      css(note, { fontSize: '11.5px', color: T.textMuted, marginTop: '8px', textAlign: 'center', fontStyle: 'italic' });
       footer.appendChild(note);
     }
 
@@ -1463,58 +1653,67 @@ RULES:
     css(overlay, {
       position: 'fixed',
       inset: '0',
-      background: 'rgba(0,0,0,0.55)',
+      background: 'rgba(26, 27, 58, 0.65)',
       zIndex: '1000000',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
+      fontFamily: T.fontBody,
     });
 
     const modal = el('div');
     css(modal, {
-      background: '#fff',
-      borderRadius: '10px',
-      padding: '28px',
+      background: T.bg,
+      borderRadius: T.radius,
+      padding: '30px 32px',
       width: '520px',
       maxWidth: '92vw',
-      fontFamily: 'system-ui, sans-serif',
-      boxShadow: '0 16px 48px rgba(0,0,0,0.25)',
+      fontFamily: T.fontBody,
+      boxShadow: T.shadow,
+      position: 'relative',
+      overflow: 'hidden',
+      borderTop: `5px solid ${T.accent2}`,
     });
 
     modal.innerHTML = `
-      <h3 style="margin:0 0 6px;font-size:16px;color:#111;font-weight:700">Add New Page</h3>
-      <p style="margin:0 0 16px;font-size:13px;color:#666;line-height:1.5">
+      <h3 style="margin:0 0 6px;font-size:22px;color:${T.primary};font-family:${T.fontHead};font-weight:600;letter-spacing:-0.02em;line-height:1.15">Add <span style="color:${T.accent2};font-style:italic">New Page</span></h3>
+      <p style="margin:0 0 18px;font-size:13.5px;color:${T.textMuted};line-height:1.55">
         Describe the new page. The AI will generate it using your site's existing theme and navigation.
       </p>
-      <label style="display:block;margin-bottom:10px;">
-        <span style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:4px;">Page description</span>
+      <label style="display:block;margin-bottom:12px;">
+        <span style="display:block;font-size:11px;font-weight:600;color:${T.primary};margin-bottom:5px;letter-spacing:0.04em;text-transform:uppercase;">Page description</span>
         <textarea
           id="__webby-addpage-desc"
           placeholder="e.g. A services page listing massage therapy, physiotherapy, and acupuncture. Each service gets a card with a title, short description, and a Book Now button."
-          style="width:100%;height:96px;padding:10px 12px;border:1px solid #ddd;border-radius:6px;
-                 font-size:13px;font-family:inherit;resize:vertical;box-sizing:border-box;
-                 line-height:1.5;outline:none;transition:border-color 0.15s;"
+          style="width:100%;height:100px;padding:12px 14px;border:1.5px solid ${T.border};border-radius:${T.radiusSm};
+                 font-size:13.5px;font-family:${T.fontBody};resize:vertical;box-sizing:border-box;
+                 line-height:1.55;outline:none;background:#fff;color:${T.primary};
+                 transition:border-color 0.18s ease, box-shadow 0.18s ease;"
         ></textarea>
       </label>
-      <label style="display:block;margin-bottom:8px;">
-        <span style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:4px;">Navigation label</span>
+      <label style="display:block;margin-bottom:10px;">
+        <span style="display:block;font-size:11px;font-weight:600;color:${T.primary};margin-bottom:5px;letter-spacing:0.04em;text-transform:uppercase;">Navigation label</span>
         <input id="__webby-addpage-label" type="text" placeholder="e.g. Services"
-          style="width:100%;padding:7px 10px;border:1px solid #ddd;border-radius:6px;
-                 font-size:13px;font-family:inherit;box-sizing:border-box;outline:none;" />
+          style="width:100%;padding:9px 12px;border:1.5px solid ${T.border};border-radius:${T.radiusSm};
+                 font-size:13.5px;font-family:${T.fontBody};box-sizing:border-box;outline:none;background:#fff;color:${T.primary};
+                 transition:border-color 0.18s ease, box-shadow 0.18s ease;" />
       </label>
-      <p style="margin:0 0 16px;font-size:11px;color:#9ca3af;">
-        Filename: <span id="__webby-addpage-fname" style="font-family:monospace;">—</span>
+      <p style="margin:0 0 16px;font-size:11.5px;color:${T.textMuted};">
+        Filename: <span id="__webby-addpage-fname" style="font-family:${T.fontMono};color:${T.primary};">—</span>
       </p>
-      <p id="__webby-addpage-error" style="display:none;margin:0 0 12px;font-size:12px;color:#ef4444;"></p>
-      <div style="display:flex;gap:8px;justify-content:flex-end">
+      <p id="__webby-addpage-error" style="display:none;margin:0 0 12px;font-size:12.5px;color:${T.danger};"></p>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
         <button id="__webby-addpage-cancel"
-          style="padding:8px 16px;border:1px solid #ddd;background:#fff;border-radius:6px;
-                 cursor:pointer;font-size:13px;font-family:inherit;color:#444;">
+          style="padding:9px 20px;border:1.5px solid ${T.border};background:transparent;border-radius:${T.radiusPill};
+                 cursor:pointer;font-size:13px;font-family:${T.fontBody};font-weight:500;color:${T.primary};
+                 transition:background 0.18s ease, border-color 0.18s ease;">
           Cancel
         </button>
         <button id="__webby-addpage-submit"
-          style="padding:8px 18px;background:#3b82f6;color:#fff;border:none;border-radius:6px;
-                 cursor:pointer;font-size:13px;font-weight:600;font-family:inherit;transition:background 0.15s;">
+          style="padding:9px 22px;background:${T.accent};color:${T.primary};border:2px solid transparent;
+                 border-radius:${T.radiusPill};cursor:pointer;font-size:13px;font-weight:600;
+                 font-family:${T.fontBody};letter-spacing:-0.005em;box-shadow:${T.shadowCta};
+                 transition:background 0.18s ease, transform 0.18s ease;">
           Generate with AI
         </button>
       </div>
@@ -1539,12 +1738,22 @@ RULES:
     });
 
     descInput.focus();
-    descInput.addEventListener('focus', () => { descInput.style.borderColor = '#3b82f6'; });
-    descInput.addEventListener('blur',  () => { descInput.style.borderColor = '#ddd'; });
-    labelInput.addEventListener('focus', () => { labelInput.style.borderColor = '#3b82f6'; });
-    labelInput.addEventListener('blur',  () => { labelInput.style.borderColor = '#ddd'; });
-    submitBtn.addEventListener('mouseenter', () => { submitBtn.style.background = '#2563eb'; });
-    submitBtn.addEventListener('mouseleave', () => { submitBtn.style.background = '#3b82f6'; });
+    const focusRing = (input) => {
+      input.addEventListener('focus', () => {
+        input.style.borderColor = T.accent2;
+        input.style.boxShadow = '0 0 0 3px rgba(45, 212, 191, 0.15)';
+      });
+      input.addEventListener('blur', () => {
+        input.style.borderColor = T.border;
+        input.style.boxShadow = 'none';
+      });
+    };
+    focusRing(descInput);
+    focusRing(labelInput);
+    submitBtn.addEventListener('mouseenter', () => { submitBtn.style.background = T.accent3; submitBtn.style.transform = 'translateY(-2px)'; });
+    submitBtn.addEventListener('mouseleave', () => { submitBtn.style.background = T.accent; submitBtn.style.transform = 'translateY(0)'; });
+    cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = T.bgAlt; });
+    cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.background = 'transparent'; });
 
     let pending = false;
     cancelBtn.addEventListener('click', () => { if (!pending) overlay.remove(); });
@@ -1555,8 +1764,8 @@ RULES:
     submitBtn.addEventListener('click', async () => {
       const description = descInput.value.trim();
       const navLabel    = labelInput.value.trim();
-      if (!description) { descInput.style.borderColor  = '#ef4444'; descInput.focus();  return; }
-      if (!navLabel)    { labelInput.style.borderColor = '#ef4444'; labelInput.focus(); return; }
+      if (!description) { descInput.style.borderColor  = T.danger; descInput.focus();  return; }
+      if (!navLabel)    { labelInput.style.borderColor = T.danger; labelInput.focus(); return; }
 
       const filename = labelToFilename(navLabel);
       if (pagesInventory.pages.find(p => p.file === filename)) {
@@ -1969,12 +2178,14 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
       top: '50%',
       left: '50%',
       transform: 'translate(-50%, -50%)',
-      background: 'rgba(0,0,0,0.65)',
-      color: '#fff',
-      padding: '6px 12px',
-      borderRadius: '4px',
+      background: T.primary,
+      color: T.bg,
+      padding: '8px 16px',
+      borderRadius: T.radiusPill,
       fontSize: '12px',
-      fontFamily: 'system-ui, sans-serif',
+      fontWeight: '500',
+      fontFamily: T.fontBody,
+      boxShadow: '0 8px 20px -6px rgba(26, 27, 58, 0.45)',
       pointerEvents: 'none',
       opacity: '0',
       transition: 'opacity 0.2s',
@@ -2039,46 +2250,54 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
     css(overlay, {
       position: 'fixed',
       inset: '0',
-      background: 'rgba(0,0,0,0.55)',
+      background: 'rgba(26, 27, 58, 0.65)',
       zIndex: '1000000',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
+      fontFamily: T.fontBody,
     });
 
     const modal = el('div');
     css(modal, {
-      background: '#fff',
-      borderRadius: '10px',
-      padding: '28px',
+      background: T.bg,
+      borderRadius: T.radius,
+      padding: '30px 32px',
       width: '500px',
       maxWidth: '92vw',
-      fontFamily: 'system-ui, sans-serif',
-      boxShadow: '0 16px 48px rgba(0,0,0,0.25)',
+      fontFamily: T.fontBody,
+      boxShadow: T.shadow,
+      position: 'relative',
+      overflow: 'hidden',
+      borderTop: `5px solid ${T.accent2}`,
     });
 
     modal.innerHTML = `
-      <h3 style="margin:0 0 6px;font-size:16px;color:#111;font-weight:700">Add New Section</h3>
-      <p style="margin:0 0 16px;font-size:13px;color:#666;line-height:1.5">
+      <h3 style="margin:0 0 6px;font-size:22px;color:${T.primary};font-family:${T.fontHead};font-weight:600;letter-spacing:-0.02em;line-height:1.15">Add <span style="color:${T.accent2};font-style:italic">New Section</span></h3>
+      <p style="margin:0 0 18px;font-size:13.5px;color:${T.textMuted};line-height:1.55">
         Describe the section you want. Be specific — the more detail you give, the better the result.
       </p>
       <textarea
         id="__webby-ai-desc"
         placeholder="e.g. A testimonials section with 3 client quotes in cards, showing name, role, and a star rating"
-        style="width:100%;height:96px;padding:10px 12px;border:1px solid #ddd;border-radius:6px;
-               font-size:13px;font-family:inherit;resize:vertical;box-sizing:border-box;
-               line-height:1.5;outline:none;transition:border-color 0.15s;"
+        style="width:100%;height:104px;padding:12px 14px;border:1.5px solid ${T.border};border-radius:${T.radiusSm};
+               font-size:13.5px;font-family:${T.fontBody};resize:vertical;box-sizing:border-box;
+               line-height:1.55;outline:none;background:#fff;color:${T.primary};
+               transition:border-color 0.18s ease, box-shadow 0.18s ease;"
       ></textarea>
-      <p id="__webby-ai-error" style="display:none;margin:8px 0 0;font-size:12px;color:#ef4444;"></p>
-      <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
+      <p id="__webby-ai-error" style="display:none;margin:10px 0 0;font-size:12.5px;color:${T.danger};"></p>
+      <div style="display:flex;gap:10px;margin-top:20px;justify-content:flex-end">
         <button id="__webby-ai-cancel"
-          style="padding:8px 16px;border:1px solid #ddd;background:#fff;border-radius:6px;
-                 cursor:pointer;font-size:13px;font-family:inherit;color:#444;">
+          style="padding:9px 20px;border:1.5px solid ${T.border};background:transparent;border-radius:${T.radiusPill};
+                 cursor:pointer;font-size:13px;font-family:${T.fontBody};font-weight:500;color:${T.primary};
+                 transition:background 0.18s ease, border-color 0.18s ease;">
           Cancel
         </button>
         <button id="__webby-ai-submit"
-          style="padding:8px 18px;background:#3b82f6;color:#fff;border:none;border-radius:6px;
-                 cursor:pointer;font-size:13px;font-weight:600;font-family:inherit;transition:background 0.15s;">
+          style="padding:9px 22px;background:${T.accent};color:${T.primary};border:2px solid transparent;
+                 border-radius:${T.radiusPill};cursor:pointer;font-size:13px;font-weight:600;
+                 font-family:${T.fontBody};letter-spacing:-0.005em;box-shadow:${T.shadowCta};
+                 transition:background 0.18s ease, transform 0.18s ease;">
           Generate with AI
         </button>
       </div>
@@ -2093,11 +2312,18 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
     const cancelBtn = modal.querySelector('#__webby-ai-cancel');
 
     textarea.focus();
-    textarea.addEventListener('focus', () => { textarea.style.borderColor = '#3b82f6'; });
-    textarea.addEventListener('blur', () => { textarea.style.borderColor = '#ddd'; });
-
-    submitBtn.addEventListener('mouseenter', () => { submitBtn.style.background = '#2563eb'; });
-    submitBtn.addEventListener('mouseleave', () => { submitBtn.style.background = '#3b82f6'; });
+    textarea.addEventListener('focus', () => {
+      textarea.style.borderColor = T.accent2;
+      textarea.style.boxShadow = '0 0 0 3px rgba(45, 212, 191, 0.15)';
+    });
+    textarea.addEventListener('blur', () => {
+      textarea.style.borderColor = T.border;
+      textarea.style.boxShadow = 'none';
+    });
+    submitBtn.addEventListener('mouseenter', () => { submitBtn.style.background = T.accent3; submitBtn.style.transform = 'translateY(-2px)'; });
+    submitBtn.addEventListener('mouseleave', () => { submitBtn.style.background = T.accent; submitBtn.style.transform = 'translateY(0)'; });
+    cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = T.bgAlt; });
+    cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.background = 'transparent'; });
 
     const close = () => overlay.remove();
     cancelBtn.addEventListener('click', close);
@@ -2109,7 +2335,7 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
     submitBtn.addEventListener('click', async () => {
       const description = textarea.value.trim();
       if (!description) {
-        textarea.style.borderColor = '#ef4444';
+        textarea.style.borderColor = T.danger;
         return;
       }
 
@@ -2694,8 +2920,8 @@ RULES:
     const container = el('div');
     css(container, {
       marginTop: '6px',
-      border: '1px solid #e5e7eb',
-      borderRadius: '4px',
+      border: `1.5px solid ${T.border}`,
+      borderRadius: T.radiusSm,
       background: '#fff',
       overflow: 'hidden',
     });
@@ -2706,12 +2932,14 @@ RULES:
     css(filter, {
       width: '100%',
       boxSizing: 'border-box',
-      padding: '5px 8px',
+      padding: '7px 10px',
       border: 'none',
-      borderBottom: '1px solid #e5e7eb',
-      fontSize: '11px',
-      fontFamily: 'inherit',
+      borderBottom: `1px solid ${T.borderSoft}`,
+      fontSize: '11.5px',
+      fontFamily: T.fontBody,
+      color: T.primary,
       outline: 'none',
+      background: T.bg,
     });
 
     const list = el('div');
@@ -2726,22 +2954,24 @@ RULES:
       if (!matches.length) {
         const empty = el('div');
         empty.textContent = 'No matches';
-        css(empty, { padding: '10px', fontSize: '11px', color: '#9ca3af', textAlign: 'center' });
+        css(empty, { padding: '12px', fontSize: '11.5px', color: T.textMuted, textAlign: 'center', fontStyle: 'italic' });
         list.appendChild(empty);
         return;
       }
       matches.forEach(font => {
         const item = el('div');
         css(item, {
-          padding: '6px 10px',
-          fontSize: '13px',
+          padding: '8px 12px',
+          fontSize: '13.5px',
+          color: T.primary,
           cursor: 'pointer',
-          borderBottom: '1px solid #f3f4f6',
+          borderBottom: `1px solid ${T.borderSoft}`,
           fontFamily: fontFamilyStack(font),
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'baseline',
           gap: '8px',
+          transition: 'background 0.12s',
         });
         // Note: we don't auto-load fonts for preview — that would inject a
         // <link> for every font in the list and the shared-head sync would
@@ -2756,16 +2986,16 @@ RULES:
         tag.textContent = font.cat;
         css(tag, {
           fontSize: '9px',
-          color: '#9ca3af',
-          fontFamily: 'system-ui, sans-serif',
+          color: T.textMuted,
+          fontFamily: T.fontBody,
           textTransform: 'uppercase',
-          letterSpacing: '0.05em',
+          letterSpacing: '0.08em',
           flexShrink: '0',
         });
 
         item.append(label, tag);
 
-        item.addEventListener('mouseenter', () => { item.style.background = '#f3f4f6'; });
+        item.addEventListener('mouseenter', () => { item.style.background = T.bgAlt; });
         item.addEventListener('mouseleave', () => { item.style.background = ''; });
 
         // The picker is "dumb" — it reports the selection but does NOT inject
@@ -2816,40 +3046,44 @@ RULES:
       top: '44px',
       right: '0',
       bottom: '0',
-      width: '270px',
-      background: '#fff',
-      borderLeft: '1px solid #e5e7eb',
+      width: '290px',
+      background: T.bg,
+      borderLeft: `1px solid ${T.border}`,
       zIndex: '999998',
       overflowY: 'auto',
-      fontFamily: 'system-ui, sans-serif',
-      fontSize: '12px',
-      boxShadow: '-4px 0 20px rgba(0,0,0,0.1)',
+      fontFamily: T.fontBody,
+      fontSize: '13px',
+      boxShadow: '-8px 0 28px -8px rgba(26, 27, 58, 0.18)',
+      color: T.primary,
     });
 
     // Header
     const header = el('div');
     css(header, {
-      padding: '12px 16px',
-      borderBottom: '1px solid #e5e7eb',
+      padding: '16px 18px 14px',
+      borderBottom: `1px solid ${T.borderSoft}`,
       display: 'flex',
       justifyContent: 'space-between',
       alignItems: 'center',
       position: 'sticky',
       top: '0',
-      background: '#fff',
+      background: T.bg,
       zIndex: '1',
     });
-    header.innerHTML = `<strong style="font-size:13px;color:#111">Theme Variables</strong>
-      <button style="background:none;border:none;cursor:pointer;font-size:18px;color:#9ca3af;line-height:1;">&times;</button>`;
-    header.querySelector('button').addEventListener('click', () => panel.remove());
+    header.innerHTML = `<strong style="font-size:17px;color:${T.primary};font-family:${T.fontHead};font-weight:600;letter-spacing:-0.015em">Theme</strong>
+      <button style="background:none;border:none;cursor:pointer;font-size:20px;color:${T.textMuted};line-height:1;padding:0 4px;transition:color 0.15s;">&times;</button>`;
+    const themeClose = header.querySelector('button');
+    themeClose.addEventListener('mouseenter', () => { themeClose.style.color = T.primary; });
+    themeClose.addEventListener('mouseleave', () => { themeClose.style.color = T.textMuted; });
+    themeClose.addEventListener('click', () => panel.remove());
 
     // Content
     const content = el('div');
-    css(content, { padding: '12px 16px 24px' });
+    css(content, { padding: '16px 18px 28px' });
 
     // ── Favicon section ──────────────────────────────────────────────────────
     const faviconSection = el('div');
-    css(faviconSection, { marginBottom: '20px', paddingBottom: '20px', borderBottom: '1px solid #f3f4f6' });
+    css(faviconSection, { marginBottom: '22px', paddingBottom: '22px', borderBottom: `1px solid ${T.borderSoft}` });
 
     const faviconTitle = el('div');
     faviconTitle.textContent = 'Site Identity';
@@ -2857,9 +3091,9 @@ RULES:
       fontWeight: '700',
       textTransform: 'uppercase',
       fontSize: '10px',
-      color: '#9ca3af',
-      letterSpacing: '0.08em',
-      marginBottom: '10px',
+      color: T.textMuted,
+      letterSpacing: '0.1em',
+      marginBottom: '12px',
     });
 
     const faviconRow = el('div');
@@ -2868,11 +3102,11 @@ RULES:
     // Preview box
     const faviconPreview = el('div');
     css(faviconPreview, {
-      width: '48px',
-      height: '48px',
-      border: '1px solid #e5e7eb',
-      borderRadius: '6px',
-      background: '#f9fafb',
+      width: '52px',
+      height: '52px',
+      border: `1px solid ${T.border}`,
+      borderRadius: T.radiusSm,
+      background: '#fff',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
@@ -2890,7 +3124,7 @@ RULES:
       css(faviconImg, { width: '100%', height: '100%', objectFit: 'contain' });
       faviconPreview.appendChild(faviconImg);
     } else {
-      faviconPreview.innerHTML = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>`;
+      faviconPreview.innerHTML = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="${T.textMuted}" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>`;
     }
 
     // Hover overlay
@@ -2899,16 +3133,18 @@ RULES:
     css(faviconHint, {
       position: 'absolute',
       inset: '0',
-      background: 'rgba(0,0,0,0.45)',
-      color: '#fff',
-      fontSize: '9px',
+      background: 'rgba(26, 27, 58, 0.75)',
+      color: T.bg,
+      fontSize: '9.5px',
+      fontWeight: '600',
+      letterSpacing: '0.03em',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
       textAlign: 'center',
       opacity: '0',
       transition: 'opacity 0.15s',
-      borderRadius: '5px',
+      borderRadius: T.radiusSm,
     });
     faviconPreview.appendChild(faviconHint);
     faviconPreview.addEventListener('mouseenter', () => { faviconHint.style.opacity = '1'; });
@@ -2918,10 +3154,10 @@ RULES:
     css(faviconMeta, { flex: '1', minWidth: '0' });
     const faviconLabel = el('div');
     faviconLabel.textContent = 'Favicon';
-    css(faviconLabel, { fontWeight: '600', fontSize: '12px', color: '#374151', marginBottom: '2px' });
+    css(faviconLabel, { fontWeight: '600', fontSize: '13px', color: T.primary, marginBottom: '3px' });
     const faviconSub = el('div');
     faviconSub.textContent = existingIcon ? 'favicon.png' : 'None set';
-    css(faviconSub, { fontSize: '10px', color: '#9ca3af' });
+    css(faviconSub, { fontSize: '10.5px', color: T.textMuted, fontFamily: T.fontMono });
     faviconMeta.append(faviconLabel, faviconSub);
 
     // Hidden file input
@@ -2982,11 +3218,11 @@ RULES:
 
     // Page title row
     const titleRow = el('div');
-    css(titleRow, { marginTop: '12px' });
+    css(titleRow, { marginTop: '14px' });
 
     const titleLabel = el('label');
     titleLabel.textContent = 'Page title';
-    css(titleLabel, { display: 'block', fontSize: '11px', color: '#374151', fontWeight: '600', marginBottom: '4px' });
+    css(titleLabel, { display: 'block', fontSize: '11px', color: T.primary, fontWeight: '600', marginBottom: '5px', letterSpacing: '0.04em', textTransform: 'uppercase' });
 
     const titleInput = el('input');
     titleInput.type = 'text';
@@ -2995,12 +3231,18 @@ RULES:
     css(titleInput, {
       width: '100%',
       boxSizing: 'border-box',
-      padding: '5px 8px',
-      border: '1px solid #d1d5db',
-      borderRadius: '4px',
-      fontSize: '12px',
-      fontFamily: 'inherit',
+      padding: '7px 10px',
+      border: `1.5px solid ${T.border}`,
+      borderRadius: T.radiusSm,
+      fontSize: '12.5px',
+      fontFamily: T.fontBody,
+      background: '#fff',
+      color: T.primary,
+      outline: 'none',
+      transition: 'border-color 0.15s',
     });
+    titleInput.addEventListener('focus', () => { titleInput.style.borderColor = T.accent2; });
+    titleInput.addEventListener('blur',  () => { titleInput.style.borderColor = T.border; });
     titleInput.addEventListener('input', () => {
       document.title = titleInput.value;
       const titleEl = document.querySelector('title');
@@ -3015,11 +3257,11 @@ RULES:
 
     // Description row
     const descRow = el('div');
-    css(descRow, { marginTop: '12px' });
+    css(descRow, { marginTop: '14px' });
 
     const descLabel = el('label');
     descLabel.textContent = 'Meta description';
-    css(descLabel, { display: 'block', fontSize: '11px', color: '#374151', fontWeight: '600', marginBottom: '4px' });
+    css(descLabel, { display: 'block', fontSize: '11px', color: T.primary, fontWeight: '600', marginBottom: '5px', letterSpacing: '0.04em', textTransform: 'uppercase' });
 
     const existingDesc = document.querySelector('meta[name="description"]');
     const descInput = el('textarea');
@@ -3028,14 +3270,20 @@ RULES:
     css(descInput, {
       width: '100%',
       boxSizing: 'border-box',
-      padding: '5px 8px',
-      border: '1px solid #d1d5db',
-      borderRadius: '4px',
-      fontSize: '12px',
-      fontFamily: 'inherit',
+      padding: '7px 10px',
+      border: `1.5px solid ${T.border}`,
+      borderRadius: T.radiusSm,
+      fontSize: '12.5px',
+      fontFamily: T.fontBody,
+      background: '#fff',
+      color: T.primary,
       resize: 'vertical',
-      height: '62px',
+      height: '66px',
+      outline: 'none',
+      transition: 'border-color 0.15s',
     });
+    descInput.addEventListener('focus', () => { descInput.style.borderColor = T.accent2; });
+    descInput.addEventListener('blur',  () => { descInput.style.borderColor = T.border; });
     descInput.addEventListener('input', () => {
       upsertMetaTag('description', descInput.value);
       setDirty(true);
@@ -3045,15 +3293,15 @@ RULES:
 
     // Keywords row
     const kwRow = el('div');
-    css(kwRow, { marginTop: '12px' });
+    css(kwRow, { marginTop: '14px' });
 
     const kwLabel = el('label');
     kwLabel.textContent = 'Keywords';
-    css(kwLabel, { display: 'block', fontSize: '11px', color: '#374151', fontWeight: '600', marginBottom: '4px' });
+    css(kwLabel, { display: 'block', fontSize: '11px', color: T.primary, fontWeight: '600', marginBottom: '4px', letterSpacing: '0.04em', textTransform: 'uppercase' });
 
     const kwHint = el('div');
     kwHint.textContent = 'Comma-separated';
-    css(kwHint, { fontSize: '10px', color: '#9ca3af', marginBottom: '4px' });
+    css(kwHint, { fontSize: '10.5px', color: T.textMuted, marginBottom: '5px', fontStyle: 'italic' });
 
     const existingKw = document.querySelector('meta[name="keywords"]');
     const kwInput = el('input');
@@ -3063,12 +3311,18 @@ RULES:
     css(kwInput, {
       width: '100%',
       boxSizing: 'border-box',
-      padding: '5px 8px',
-      border: '1px solid #d1d5db',
-      borderRadius: '4px',
-      fontSize: '12px',
-      fontFamily: 'inherit',
+      padding: '7px 10px',
+      border: `1.5px solid ${T.border}`,
+      borderRadius: T.radiusSm,
+      fontSize: '12.5px',
+      fontFamily: T.fontBody,
+      background: '#fff',
+      color: T.primary,
+      outline: 'none',
+      transition: 'border-color 0.15s',
     });
+    kwInput.addEventListener('focus', () => { kwInput.style.borderColor = T.accent2; });
+    kwInput.addEventListener('blur',  () => { kwInput.style.borderColor = T.border; });
     kwInput.addEventListener('input', () => {
       upsertMetaTag('keywords', kwInput.value);
       setDirty(true);
@@ -3091,9 +3345,9 @@ RULES:
         fontWeight: '700',
         textTransform: 'uppercase',
         fontSize: '10px',
-        color: '#9ca3af',
-        letterSpacing: '0.08em',
-        marginBottom: '10px',
+        color: T.textMuted,
+        letterSpacing: '0.1em',
+        marginBottom: '12px',
       });
       section.appendChild(groupTitle);
 
@@ -3106,18 +3360,22 @@ RULES:
         const addFontBtn = el('button');
         addFontBtn.textContent = '＋ Add font variable';
         css(addFontBtn, {
-          marginTop: '6px',
-          padding: '3px 8px',
-          background: 'none',
-          border: '1px dashed #d1d5db',
-          borderRadius: '4px',
-          fontSize: '11px',
-          color: '#6b7280',
+          marginTop: '8px',
+          padding: '7px 12px',
+          background: 'transparent',
+          border: `1.5px dashed ${T.border}`,
+          borderRadius: T.radiusSm,
+          fontSize: '11.5px',
+          color: T.textMuted,
           cursor: 'pointer',
           width: '100%',
           textAlign: 'left',
-          fontFamily: 'inherit',
+          fontFamily: T.fontBody,
+          fontWeight: '500',
+          transition: 'background 0.15s, border-color 0.15s, color 0.15s',
         });
+        addFontBtn.addEventListener('mouseenter', () => { addFontBtn.style.background = T.bgAlt; addFontBtn.style.borderColor = T.accent2; addFontBtn.style.color = T.primary; });
+        addFontBtn.addEventListener('mouseleave', () => { addFontBtn.style.background = 'transparent'; addFontBtn.style.borderColor = T.border; addFontBtn.style.color = T.textMuted; });
 
         addFontBtn.addEventListener('click', () => {
           addFontBtn.style.display = 'none';
@@ -3131,12 +3389,12 @@ RULES:
 
           const prefix = el('span');
           prefix.textContent = '--font-';
-          css(prefix, { fontSize: '11px', fontFamily: 'monospace', color: '#9ca3af', flexShrink: '0' });
+          css(prefix, { fontSize: '11px', fontFamily: T.fontMono, color: T.textMuted, flexShrink: '0' });
 
           const nameInput = el('input');
           nameInput.type = 'text';
           nameInput.placeholder = 'display';
-          css(nameInput, { flex: '1', minWidth: '0', padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '11px', fontFamily: 'monospace' });
+          css(nameInput, { flex: '1', minWidth: '0', padding: '5px 8px', border: `1.5px solid ${T.border}`, borderRadius: T.radiusSm, fontSize: '11px', fontFamily: T.fontMono, background: '#fff', color: T.primary, outline: 'none' });
 
           nameRow.append(prefix, nameInput);
 
@@ -3144,7 +3402,7 @@ RULES:
           const valueInput = el('input');
           valueInput.type = 'text';
           valueInput.placeholder = "'Playfair Display', serif";
-          css(valueInput, { width: '100%', boxSizing: 'border-box', padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '11px', fontFamily: 'monospace', marginBottom: '6px' });
+          css(valueInput, { width: '100%', boxSizing: 'border-box', padding: '5px 8px', border: `1.5px solid ${T.border}`, borderRadius: T.radiusSm, fontSize: '11px', fontFamily: T.fontMono, marginBottom: '6px', background: '#fff', color: T.primary, outline: 'none' });
 
           // Row 3: Google Fonts picker — fills in the value + auto-suggests a variable
           // name. The <link> is injected on commit (doAdd), not on preview click.
@@ -3169,11 +3427,15 @@ RULES:
 
           const confirmBtn = el('button');
           confirmBtn.textContent = 'Add';
-          css(confirmBtn, { padding: '3px 10px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '11px', cursor: 'pointer', fontFamily: 'inherit' });
+          css(confirmBtn, { padding: '5px 14px', background: T.accent, color: T.primary, border: '2px solid transparent', borderRadius: T.radiusPill, fontSize: '11.5px', fontWeight: '600', cursor: 'pointer', fontFamily: T.fontBody, boxShadow: T.shadowCta, transition: 'background 0.15s, transform 0.15s' });
+          confirmBtn.addEventListener('mouseenter', () => { confirmBtn.style.background = T.accent3; confirmBtn.style.transform = 'translateY(-1px)'; });
+          confirmBtn.addEventListener('mouseleave', () => { confirmBtn.style.background = T.accent; confirmBtn.style.transform = 'translateY(0)'; });
 
           const cancelBtn = el('button');
           cancelBtn.textContent = 'Cancel';
-          css(cancelBtn, { padding: '3px 10px', background: 'none', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '11px', cursor: 'pointer', fontFamily: 'inherit' });
+          css(cancelBtn, { padding: '5px 14px', background: 'transparent', border: `1.5px solid ${T.border}`, borderRadius: T.radiusPill, fontSize: '11.5px', cursor: 'pointer', fontFamily: T.fontBody, fontWeight: '500', color: T.primary, transition: 'background 0.15s' });
+          cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = T.bgAlt; });
+          cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.background = 'transparent'; });
 
           btnRow.append(confirmBtn, cancelBtn);
           form.append(nameRow, valueInput, picker, btnRow);
@@ -3194,7 +3456,7 @@ RULES:
             // Guard against duplicates
             if (document.documentElement.style.getPropertyValue(varName) ||
                 styleEl.textContent.includes(varName + ':')) {
-              nameInput.style.borderColor = '#ef4444';
+              nameInput.style.borderColor = T.danger;
               nameInput.title = 'Variable already exists';
               return;
             }
@@ -3227,15 +3489,16 @@ RULES:
 
   function makeVarRow(varName, varValue, styleEl) {
     const row = el('div');
-    css(row, { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '7px' });
+    css(row, { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' });
 
     const label = el('label');
     label.textContent = varName.replace(/^--/, '');
     label.title = varName;
     css(label, {
       flex: '1',
-      color: '#374151',
-      fontSize: '11px',
+      color: T.primary,
+      fontSize: '11.5px',
+      fontFamily: T.fontMono,
       overflow: 'hidden',
       textOverflow: 'ellipsis',
       whiteSpace: 'nowrap',
@@ -3252,12 +3515,12 @@ RULES:
       const picker = el('input');
       picker.type = 'color';
       picker.value = hexVal;
-      css(picker, { width: '28px', height: '26px', padding: '1px', border: '1px solid #d1d5db', borderRadius: '4px', cursor: 'pointer', flexShrink: '0' });
+      css(picker, { width: '30px', height: '28px', padding: '1px', border: `1.5px solid ${T.border}`, borderRadius: T.radiusSm, cursor: 'pointer', flexShrink: '0', background: '#fff' });
 
       const hexInput = el('input');
       hexInput.type = 'text';
       hexInput.value = hexVal;
-      css(hexInput, { width: '72px', padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '11px', fontFamily: 'monospace', flexShrink: '0' });
+      css(hexInput, { width: '78px', padding: '5px 8px', border: `1.5px solid ${T.border}`, borderRadius: T.radiusSm, fontSize: '11px', fontFamily: T.fontMono, flexShrink: '0', background: '#fff', color: T.primary, outline: 'none' });
 
       const apply = val => {
         document.documentElement.style.setProperty(varName, val);
@@ -3281,7 +3544,7 @@ RULES:
       const input = el('input');
       input.type = 'text';
       input.value = trimmed;
-      css(input, { width: '110px', padding: '3px 7px', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '11px', fontFamily: 'monospace' });
+      css(input, { width: '116px', padding: '5px 8px', border: `1.5px solid ${T.border}`, borderRadius: T.radiusSm, fontSize: '11px', fontFamily: T.fontMono, background: '#fff', color: T.primary, outline: 'none' });
       const applyValue = val => {
         input.value = val;
         document.documentElement.style.setProperty(varName, val);
@@ -3310,22 +3573,23 @@ RULES:
       toggleBtn.textContent = 'Aa';
       toggleBtn.title = 'Pick a Google Font';
       css(toggleBtn, {
-        width: '26px',
-        height: '26px',
+        width: '28px',
+        height: '28px',
         padding: '0',
-        border: '1px solid #d1d5db',
-        borderRadius: '4px',
+        border: `1.5px solid ${T.border}`,
+        borderRadius: T.radiusSm,
         background: '#fff',
         cursor: 'pointer',
-        fontSize: '11px',
-        fontFamily: 'Georgia, serif',
+        fontSize: '12px',
+        fontFamily: T.fontHead,
         fontWeight: '600',
-        color: '#374151',
+        color: T.primary,
         flexShrink: '0',
+        transition: 'background 0.15s, border-color 0.15s',
       });
 
       // Narrow the value input so there's room for the toggle button
-      css(input, { width: '80px' });
+      css(input, { width: '84px' });
 
       row.append(label, input, toggleBtn);
 
@@ -3335,15 +3599,18 @@ RULES:
           pickerEl.remove();
           pickerEl = null;
           toggleBtn.style.background = '#fff';
+          toggleBtn.style.borderColor = T.border;
           return;
         }
-        toggleBtn.style.background = '#e5e7eb';
+        toggleBtn.style.background = T.accent3;
+        toggleBtn.style.borderColor = 'transparent';
         pickerEl = makeGoogleFontPicker((font, value) => {
           applyValue(value);
           ensureGoogleFontLink(font);
           pickerEl.remove();
           pickerEl = null;
           toggleBtn.style.background = '#fff';
+          toggleBtn.style.borderColor = T.border;
         });
         wrapper.appendChild(pickerEl);
       });
@@ -3491,14 +3758,15 @@ RULES:
     css(bar, {
       position: 'fixed',
       zIndex: '1000002',
-      background: '#1e293b',
-      borderRadius: '6px',
-      padding: '3px 5px',
+      background: T.primary,
+      borderRadius: '12px',
+      padding: '4px 6px',
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'stretch',
       gap: '2px',
-      boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
+      boxShadow: '0 14px 32px -10px rgba(26, 27, 58, 0.45)',
+      fontFamily: T.fontBody,
     });
 
     const row = el('div');
@@ -3507,9 +3775,9 @@ RULES:
     const flyout = el('div', { 'data-editor-ui': '' });
     css(flyout, {
       display: 'none',
-      padding: '6px 4px 3px',
-      marginTop: '4px',
-      borderTop: '1px solid rgba(255,255,255,0.12)',
+      padding: '8px 4px 4px',
+      marginTop: '5px',
+      borderTop: '1px solid rgba(253, 251, 245, 0.12)',
     });
 
     const boldActive   = document.queryCommandState('bold');
@@ -3522,7 +3790,7 @@ RULES:
       if (strongContainer) normalizeStrong(strongContainer);
       hideSelectionToolbar();
     });
-    css(boldBtn, { fontWeight: '700', fontFamily: 'Georgia, serif' });
+    css(boldBtn, { fontWeight: '700', fontFamily: T.fontHead });
     boldBtn.title = 'Bold';
 
     const italicBtn = makeSelBtn('I', italicActive, () => {
@@ -3532,7 +3800,7 @@ RULES:
       if (emContainer) normalizeEm(emContainer);
       hideSelectionToolbar();
     });
-    css(italicBtn, { fontStyle: 'italic', fontFamily: 'Georgia, serif' });
+    css(italicBtn, { fontStyle: 'italic', fontFamily: T.fontHead });
     italicBtn.title = 'Italic';
 
     const codeRangeNode = (() => {
@@ -3609,7 +3877,7 @@ RULES:
     const fontBtn = makeSelBtn('Aa', false, () => {
       toggleFlyout(flyout, 'font', () => populateFontFlyout(flyout, savedRange));
     });
-    css(fontBtn, { fontFamily: 'Georgia, serif', fontWeight: '600', fontSize: '12px' });
+    css(fontBtn, { fontFamily: T.fontHead, fontWeight: '600', fontSize: '12px' });
     fontBtn.title = 'Font family';
 
     row.append(boldBtn, italicBtn, colorBtn, fontBtn, codeBtn, linkBtn);
@@ -3750,10 +4018,13 @@ RULES:
         const swatch = el('button', { 'data-editor-ui': '' });
         swatch.title = varName.replace(/^--/, '');
         css(swatch, {
-          width: '22px', height: '22px', padding: '0',
-          border: '1px solid rgba(255,255,255,0.25)',
-          borderRadius: '4px', cursor: 'pointer', background: varValue,
+          width: '24px', height: '24px', padding: '0',
+          border: '1px solid rgba(253, 251, 245, 0.25)',
+          borderRadius: '6px', cursor: 'pointer', background: varValue,
+          transition: 'transform 0.12s',
         });
+        swatch.addEventListener('mouseenter', () => { swatch.style.transform = 'scale(1.1)'; });
+        swatch.addEventListener('mouseleave', () => { swatch.style.transform = 'scale(1)'; });
         swatch.addEventListener('mousedown', e => {
           e.preventDefault();
           restoreSavedRange(savedRange);
@@ -3767,10 +4038,10 @@ RULES:
       const clearBtn = el('button', { 'data-editor-ui': '' });
       clearBtn.title = 'Remove text color';
       css(clearBtn, {
-        width: '22px', height: '22px', padding: '0',
-        border: '1px solid rgba(255,255,255,0.25)',
-        borderRadius: '4px', cursor: 'pointer',
-        background: 'rgba(255,255,255,0.05)', color: '#e8e8f0',
+        width: '24px', height: '24px', padding: '0',
+        border: '1px solid rgba(253, 251, 245, 0.25)',
+        borderRadius: '6px', cursor: 'pointer',
+        background: 'rgba(253, 251, 245, 0.05)', color: T.bg,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
       });
       clearBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 19 19 5"/></svg>`;
@@ -3786,10 +4057,10 @@ RULES:
       const customBtn = el('button', { 'data-editor-ui': '' });
       customBtn.title = 'Custom color (picker or hex)';
       css(customBtn, {
-        width: '22px', height: '22px', padding: '0',
-        border: '1px dashed rgba(255,255,255,0.4)',
-        borderRadius: '4px', cursor: 'pointer',
-        background: 'transparent', color: '#fff',
+        width: '24px', height: '24px', padding: '0',
+        border: `1px dashed ${T.accent3}`,
+        borderRadius: '6px', cursor: 'pointer',
+        background: 'transparent', color: T.accent3,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
       });
       customBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`;
@@ -3807,7 +4078,7 @@ RULES:
       if (!colors.length) {
         const hint = el('div');
         hint.textContent = 'No theme colors — use custom';
-        css(hint, { color: '#94a3b8', fontSize: '11px', padding: '4px 2px 0' });
+        css(hint, { color: 'rgba(253, 251, 245, 0.55)', fontSize: '11px', padding: '4px 2px 0', fontStyle: 'italic' });
         flyout.appendChild(hint);
       }
     };
@@ -3818,7 +4089,7 @@ RULES:
       css(panel, { display: 'flex', flexDirection: 'column', gap: '6px', width: '220px' });
 
       const inputRowStyle = { display: 'flex', alignItems: 'center', gap: '6px' };
-      const labelStyle = { fontSize: '11px', color: '#cbd5e1', width: '30px', flexShrink: '0' };
+      const labelStyle = { fontSize: '11px', color: 'rgba(253, 251, 245, 0.7)', width: '30px', flexShrink: '0', fontWeight: '500' };
 
       // Native picker row
       const pickerRow = el('div');
@@ -3828,13 +4099,13 @@ RULES:
       css(pickerLabel, labelStyle);
       const colorInput = el('input', { 'data-editor-ui': '' });
       colorInput.type = 'color';
-      colorInput.value = '#3b82f6';
+      colorInput.value = T.secondary;
       colorInput.title = 'Open color picker';
       css(colorInput, {
-        width: '40px', height: '26px', padding: '2px',
+        width: '42px', height: '28px', padding: '2px',
         background: 'transparent',
-        border: '1px solid rgba(255,255,255,0.2)',
-        borderRadius: '4px', cursor: 'pointer',
+        border: '1px solid rgba(253, 251, 245, 0.2)',
+        borderRadius: '6px', cursor: 'pointer',
       });
       pickerRow.append(pickerLabel, colorInput);
 
@@ -3852,38 +4123,38 @@ RULES:
       hexInput.title = 'Paste or type a hex code';
       css(hexInput, {
         flex: '1', minWidth: '0',
-        padding: '3px 6px',
-        background: 'rgba(255,255,255,0.08)',
-        border: '1px solid rgba(255,255,255,0.18)',
-        borderRadius: '4px',
-        color: '#e8e8f0',
-        fontFamily: 'monospace', fontSize: '11px',
+        padding: '4px 8px',
+        background: 'rgba(253, 251, 245, 0.08)',
+        border: '1px solid rgba(253, 251, 245, 0.18)',
+        borderRadius: '6px',
+        color: T.bg,
+        fontFamily: T.fontMono, fontSize: '11px',
         outline: 'none',
       });
       hexRow.append(hexLabel, hexInput);
 
       // Button row
       const btnRow = el('div');
-      css(btnRow, { display: 'flex', justifyContent: 'space-between', gap: '6px', marginTop: '2px' });
+      css(btnRow, { display: 'flex', justifyContent: 'space-between', gap: '6px', marginTop: '4px' });
       const backBtn = el('button', { 'data-editor-ui': '' });
       backBtn.textContent = '← Theme';
       backBtn.title = 'Back to theme colors';
       css(backBtn, {
-        padding: '3px 9px',
+        padding: '5px 12px',
         background: 'transparent',
-        border: '1px solid rgba(255,255,255,0.2)',
-        borderRadius: '4px', color: '#e8e8f0',
-        fontSize: '11px', fontFamily: 'inherit',
+        border: '1px solid rgba(253, 251, 245, 0.22)',
+        borderRadius: T.radiusPill, color: T.bg,
+        fontSize: '11px', fontFamily: T.fontBody, fontWeight: '500',
         cursor: 'pointer',
       });
       const applyBtn = el('button', { 'data-editor-ui': '' });
       applyBtn.textContent = 'Apply';
       applyBtn.title = 'Apply this color to the selection';
       css(applyBtn, {
-        padding: '3px 12px',
-        background: '#3b82f6', border: 'none',
-        borderRadius: '4px', color: '#fff',
-        fontSize: '11px', fontFamily: 'inherit',
+        padding: '5px 16px',
+        background: T.accent, border: 'none',
+        borderRadius: T.radiusPill, color: T.primary,
+        fontSize: '11px', fontFamily: T.fontBody, fontWeight: '600',
         cursor: 'pointer',
       });
       btnRow.append(backBtn, applyBtn);
@@ -3891,10 +4162,10 @@ RULES:
       // Sync picker → hex, and hex → picker (when valid 6-digit hex)
       colorInput.addEventListener('input', () => {
         hexInput.value = colorInput.value;
-        hexInput.style.borderColor = 'rgba(255,255,255,0.18)';
+        hexInput.style.borderColor = 'rgba(253, 251, 245, 0.18)';
       });
       hexInput.addEventListener('input', () => {
-        hexInput.style.borderColor = 'rgba(255,255,255,0.18)';
+        hexInput.style.borderColor = 'rgba(253, 251, 245, 0.18)';
         let v = hexInput.value.trim();
         if (v && v[0] !== '#') v = '#' + v;
         if (/^#[0-9a-f]{6}$/i.test(v)) colorInput.value = v;
@@ -3908,7 +4179,7 @@ RULES:
         if (!val) val = colorInput.value;
         if (val[0] !== '#') val = '#' + val;
         if (!/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(val)) {
-          hexInput.style.borderColor = '#ef4444';
+          hexInput.style.borderColor = T.danger;
           return;
         }
         restoreSavedRange(savedRange);
@@ -3940,7 +4211,7 @@ RULES:
     if (!fonts.length) {
       const empty = el('div');
       empty.textContent = 'No theme fonts defined';
-      css(empty, { color: '#94a3b8', fontSize: '11px', padding: '2px 4px' });
+      css(empty, { color: 'rgba(253, 251, 245, 0.55)', fontSize: '11px', padding: '2px 4px', fontStyle: 'italic' });
       flyout.appendChild(empty);
       return;
     }
@@ -3949,18 +4220,19 @@ RULES:
       const item = el('button', { 'data-editor-ui': '', title: varValue });
       item.textContent = varName.replace(/^--font-?/, '') || 'font';
       css(item, {
-        padding: '5px 8px',
+        padding: '6px 10px',
         background: 'transparent',
         border: 'none',
-        borderRadius: '4px',
-        color: '#e8e8f0',
+        borderRadius: '6px',
+        color: T.bg,
         cursor: 'pointer',
-        fontSize: '13px',
+        fontSize: '13.5px',
         fontFamily: varValue,
         textAlign: 'left',
         width: '100%',
+        transition: 'background 0.12s',
       });
-      item.addEventListener('mouseenter', () => { item.style.background = 'rgba(255,255,255,0.1)'; });
+      item.addEventListener('mouseenter', () => { item.style.background = 'rgba(253, 251, 245, 0.1)'; });
       item.addEventListener('mouseleave', () => { item.style.background = 'transparent'; });
       item.addEventListener('mousedown', e => {
         e.preventDefault();
@@ -3978,25 +4250,27 @@ RULES:
     const btn = el('button', { 'data-editor-ui': '' });
     btn.textContent = label;
     css(btn, {
-      width: '28px',
-      height: '28px',
+      width: '30px',
+      height: '30px',
       padding: '0',
-      background: active ? 'rgba(255,255,255,0.18)' : 'transparent',
+      background: active ? 'rgba(253, 224, 71, 0.22)' : 'transparent',
       border: 'none',
-      borderRadius: '4px',
-      color: '#e8e8f0',
+      borderRadius: '8px',
+      color: active ? T.accent3 : T.bg,
       cursor: 'pointer',
       fontSize: '13px',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
       lineHeight: '1',
+      transition: 'background 0.15s',
+      fontFamily: T.fontBody,
     });
     btn.addEventListener('mouseenter', () => {
-      btn.style.background = active ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)';
+      btn.style.background = active ? 'rgba(253, 224, 71, 0.32)' : 'rgba(253, 251, 245, 0.12)';
     });
     btn.addEventListener('mouseleave', () => {
-      btn.style.background = active ? 'rgba(255,255,255,0.18)' : 'transparent';
+      btn.style.background = active ? 'rgba(253, 224, 71, 0.22)' : 'transparent';
     });
     // mousedown + preventDefault keeps the selection alive while we act on it
     btn.addEventListener('mousedown', e => {
@@ -4076,64 +4350,67 @@ RULES:
     css(popover, {
       position: 'fixed',
       zIndex: '1000001',
-      background: '#fff',
-      border: '1px solid #e5e7eb',
-      borderRadius: '8px',
-      padding: '14px 16px',
-      width: '320px',
-      boxShadow: '0 8px 24px rgba(0,0,0,0.14)',
-      fontFamily: 'system-ui, sans-serif',
+      background: T.bg,
+      border: `1px solid ${T.border}`,
+      borderRadius: T.radius,
+      padding: '16px 18px',
+      width: '330px',
+      boxShadow: T.shadow,
+      fontFamily: T.fontBody,
       fontSize: '13px',
+      color: T.primary,
     });
 
     popover.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-        <span style="font-size:12px;font-weight:600;text-transform:uppercase;
-                     letter-spacing:0.05em;color:#9ca3af;">Edit Link</span>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+        <span style="font-size:11px;font-weight:700;text-transform:uppercase;
+                     letter-spacing:0.1em;color:${T.textMuted};">Edit Link</span>
         <a id="__webby-link-goto" href="#" target="_self"
-          style="font-size:11px;color:#3b82f6;text-decoration:none;padding:2px 7px;
-                 border-radius:4px;background:rgba(59,130,246,0.08);display:none;">
+          style="font-size:11px;color:${T.primary};text-decoration:none;padding:4px 10px;
+                 border-radius:${T.radiusPill};background:${T.bgAlt};border:1px solid ${T.borderSoft};display:none;font-weight:500;">
           Go to link →
         </a>
       </div>
 
-      <label style="display:block;margin-bottom:10px;">
-        <span style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:4px;">Display text</span>
+      <label style="display:block;margin-bottom:11px;">
+        <span style="display:block;font-size:11px;font-weight:600;color:${T.primary};margin-bottom:5px;letter-spacing:0.04em;text-transform:uppercase;">Display text</span>
         <input id="__webby-link-text" type="text" value=""
-          style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:5px;
-                 font-size:13px;box-sizing:border-box;font-family:inherit;outline:none;" />
+          style="width:100%;padding:7px 10px;border:1.5px solid ${T.border};border-radius:${T.radiusSm};
+                 font-size:13px;box-sizing:border-box;font-family:${T.fontBody};background:#fff;color:${T.primary};outline:none;transition:border-color 0.15s;" />
       </label>
 
-      <label style="display:block;margin-bottom:6px;">
-        <span style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:4px;">URL</span>
+      <label style="display:block;margin-bottom:8px;">
+        <span style="display:block;font-size:11px;font-weight:600;color:${T.primary};margin-bottom:5px;letter-spacing:0.04em;text-transform:uppercase;">URL</span>
         <input id="__webby-link-url" type="text" value=""
-          style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:5px;
-                 font-size:13px;box-sizing:border-box;font-family:monospace;outline:none;" />
+          style="width:100%;padding:7px 10px;border:1.5px solid ${T.border};border-radius:${T.radiusSm};
+                 font-size:12.5px;box-sizing:border-box;font-family:${T.fontMono};background:#fff;color:${T.primary};outline:none;transition:border-color 0.15s;" />
       </label>
 
-      <div id="__webby-link-picker-wrap" style="margin-bottom:10px;">
+      <div id="__webby-link-picker-wrap" style="margin-bottom:12px;">
         <select id="__webby-link-picker"
-          style="width:100%;padding:5px 8px;border:1px solid #d1d5db;border-radius:5px;
-                 font-size:12px;font-family:inherit;color:#374151;background:#fff;outline:none;">
+          style="width:100%;padding:7px 10px;border:1.5px solid ${T.border};border-radius:${T.radiusSm};
+                 font-size:12px;font-family:${T.fontBody};color:${T.primary};background:#fff;outline:none;cursor:pointer;">
           <option value="">— Jump to a page or section —</option>
         </select>
       </div>
 
-      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:14px;">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:16px;">
         <input id="__webby-link-blank" type="checkbox"
-          style="width:15px;height:15px;cursor:pointer;accent-color:#3b82f6;" />
-        <span style="font-size:12px;color:#374151;">Open in new tab</span>
+          style="width:15px;height:15px;cursor:pointer;accent-color:${T.secondary};" />
+        <span style="font-size:12.5px;color:${T.primary};">Open in new tab</span>
       </label>
 
       <div style="display:flex;gap:8px;justify-content:flex-end">
         <button id="__webby-link-remove"
-          style="padding:5px 11px;border:1px solid #fca5a5;background:#fff;color:#ef4444;
-                 border-radius:5px;cursor:pointer;font-size:12px;font-family:inherit;">
+          style="padding:7px 14px;border:1.5px solid ${T.border};background:transparent;color:${T.textMuted};
+                 border-radius:${T.radiusPill};cursor:pointer;font-size:12px;font-family:${T.fontBody};font-weight:500;
+                 transition:background 0.15s, border-color 0.15s, color 0.15s;">
           Remove link
         </button>
         <button id="__webby-link-done"
-          style="padding:5px 14px;background:#3b82f6;color:#fff;border:none;
-                 border-radius:5px;cursor:pointer;font-size:12px;font-weight:600;font-family:inherit;">
+          style="padding:7px 18px;background:${T.accent};color:${T.primary};border:2px solid transparent;
+                 border-radius:${T.radiusPill};cursor:pointer;font-size:12px;font-weight:600;font-family:${T.fontBody};
+                 box-shadow:${T.shadowCta};transition:background 0.15s, transform 0.15s;">
           Done
         </button>
       </div>
@@ -4245,9 +4522,21 @@ RULES:
       setDirty(true);
     });
 
-    popover.querySelector('#__webby-link-done').addEventListener('click', closeLinkPopover);
+    // Focus rings on inputs
+    [textInput, urlInput].forEach(inp => {
+      inp.addEventListener('focus', () => { inp.style.borderColor = T.secondary; inp.style.boxShadow = '0 0 0 3px rgba(217, 70, 239, 0.12)'; });
+      inp.addEventListener('blur',  () => { inp.style.borderColor = T.border; inp.style.boxShadow = 'none'; });
+    });
 
-    popover.querySelector('#__webby-link-remove').addEventListener('click', () => {
+    const doneBtn = popover.querySelector('#__webby-link-done');
+    doneBtn.addEventListener('mouseenter', () => { doneBtn.style.background = T.accent3; doneBtn.style.transform = 'translateY(-1px)'; });
+    doneBtn.addEventListener('mouseleave', () => { doneBtn.style.background = T.accent; doneBtn.style.transform = 'translateY(0)'; });
+    doneBtn.addEventListener('click', closeLinkPopover);
+
+    const removeBtn = popover.querySelector('#__webby-link-remove');
+    removeBtn.addEventListener('mouseenter', () => { removeBtn.style.background = T.accent4; removeBtn.style.color = '#fff'; removeBtn.style.borderColor = 'transparent'; });
+    removeBtn.addEventListener('mouseleave', () => { removeBtn.style.background = 'transparent'; removeBtn.style.color = T.textMuted; removeBtn.style.borderColor = T.border; });
+    removeBtn.addEventListener('click', () => {
       // Unwrap: replace <a> with its text content
       const text = document.createTextNode(link.textContent);
       link.replaceWith(text);
