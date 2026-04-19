@@ -2535,6 +2535,12 @@ RULES:
         const src = s.getAttribute('src') || '';
         if (src.includes('secrets.js') || src.includes('webby.js')) s.remove();
       });
+      // The data-webby-style marker is a runtime license to "unilaterally fix"
+      // inline-styled spans during editing. Deployed HTML doesn't need it; the
+      // spans stay with their inline styles intact.
+      clone.querySelectorAll(`span[${WEBBY_STYLE_ATTR}]`).forEach(s => {
+        s.removeAttribute(WEBBY_STYLE_ATTR);
+      });
     }
 
     // Restore original body padding
@@ -4393,17 +4399,35 @@ RULES:
     sel.addRange(savedRange);
   }
 
-  // Wrap the current selection in a <span> with an inline style. Used for
-  // color and font-family applied from the selection toolbar flyouts.
+  // Marker on every span created by the selection toolbar. It's our "license
+  // to unilaterally fix" — scoping auto-cleanup to these spans means we never
+  // mutate hand-authored markup, and every text style we apply (color, font,
+  // future font-size) goes through the same replace-don't-nest path.
+  const WEBBY_STYLE_ATTR = 'data-webby-style';
+
+  // Wrap the current selection in a webby-owned <span> with an inline style.
+  // Before wrapping, strip the same property from any inline-styled span the
+  // selection fully covers so repeated font/color changes replace rather than
+  // nest — and so legacy nests authored before this marker existed collapse
+  // as soon as the user re-applies a style. A partial selection inside a
+  // larger styled span still nests — correct, since the outer style still
+  // applies to the unselected portion (and we never mutate hand-authored
+  // markup whose extent isn't fully covered).
   function wrapSelectionInStyledSpan(property, value) {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
-    const r = sel.getRangeAt(0);
-    const anchor = sel.anchorNode;
+    clearInlineStyleFromSelection(property, { onlyIfFullyCovered: true });
+
+    // Re-acquire the selection — cleanup may have unwrapped spans around it.
+    const sel2 = window.getSelection();
+    if (!sel2 || sel2.rangeCount === 0 || sel2.isCollapsed) return;
+    const r = sel2.getRangeAt(0);
+    const anchor = sel2.anchorNode;
     const editable = anchor &&
       (anchor.nodeType === Node.TEXT_NODE ? anchor.parentElement : anchor).closest('[data-editable]');
     if (!editable) return;
     const span = document.createElement('span');
+    span.setAttribute(WEBBY_STYLE_ATTR, '');
     span.style[property] = value;
     try {
       r.surroundContents(span);
@@ -4416,23 +4440,33 @@ RULES:
     setDirty(true);
   }
 
-  // Remove an inline style (e.g. color) from every span within the selection.
-  // Unwraps spans that end up with no remaining attributes.
-  function clearInlineStyleFromSelection(property) {
+  // Remove an inline style property from <span>s touched by the current
+  // selection. Unwraps spans that end up with no remaining styles or attributes.
+  //
+  // Scope is any inline-styled <span>, webby-owned or legacy — so pre-marker
+  // nested styling collapses on re-apply or explicit clear. The full-coverage
+  // guard is what keeps this safe: we only strip a property from a span if the
+  // selection covers ALL of that span's contents. Hand-authored styling that
+  // extends beyond the selection is never mutated.
+  //
+  //   onlyIfFullyCovered: true  — used by the pre-wrap cleanup.
+  //   onlyIfFullyCovered: false — used by the explicit Remove / Clear buttons
+  //     (user is being explicit, so any intersecting span is fair game).
+  function clearInlineStyleFromSelection(property, { onlyIfFullyCovered = false } = {}) {
     const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return false;
     const r = sel.getRangeAt(0);
     const anchor = sel.anchorNode;
     const editable = anchor &&
       (anchor.nodeType === Node.TEXT_NODE ? anchor.parentElement : anchor).closest('[data-editable]');
-    if (!editable) return;
+    if (!editable) return false;
 
     const candidates = new Set();
     editable.querySelectorAll('span').forEach(s => {
       if (r.intersectsNode(s)) candidates.add(s);
     });
-    // Include span ancestors of the range endpoints — they enclose the selection
-    // but wouldn't be caught by intersectsNode scan of descendants.
+    // Include span ancestors of the range endpoints — they enclose the
+    // selection but wouldn't be caught by the intersectsNode descendant scan.
     const walkUp = node => {
       let n = node && (node.nodeType === Node.TEXT_NODE ? node.parentElement : node);
       while (n && n !== editable) {
@@ -4446,11 +4480,19 @@ RULES:
     let changed = false;
     candidates.forEach(span => {
       if (!span.style[property]) return;
+      if (onlyIfFullyCovered) {
+        const spanRange = document.createRange();
+        spanRange.selectNodeContents(span);
+        const startsBefore = r.compareBoundaryPoints(Range.START_TO_START, spanRange) <= 0;
+        const endsAfter    = r.compareBoundaryPoints(Range.END_TO_END,   spanRange) >= 0;
+        if (!(startsBefore && endsAfter)) return;
+      }
       span.style[property] = '';
       changed = true;
       const styleAttr = span.getAttribute('style');
       if (!styleAttr || !styleAttr.trim()) {
         span.removeAttribute('style');
+        span.removeAttribute(WEBBY_STYLE_ATTR);
         if (span.attributes.length === 0) {
           const parent = span.parentNode;
           while (span.firstChild) parent.insertBefore(span.firstChild, span);
@@ -4460,6 +4502,7 @@ RULES:
     });
 
     if (changed) setDirty(true);
+    return changed;
   }
 
   function populateColorFlyout(flyout, savedRange) {
@@ -4697,6 +4740,37 @@ RULES:
       });
       list.appendChild(item);
     });
+
+    // Clear — strip font-family from webby-owned spans in the selection. Lets
+    // the user revert text back to inheriting the zone's default font without
+    // manually editing HTML.
+    const clearBtn = el('button', { 'data-editor-ui': '' });
+    clearBtn.title = 'Remove font styling from the selected text';
+    css(clearBtn, {
+      marginTop: '4px',
+      padding: '6px 10px',
+      background: 'transparent',
+      border: 'none',
+      borderTop: '1px solid rgba(253, 251, 245, 0.12)',
+      color: 'rgba(253, 251, 245, 0.7)',
+      cursor: 'pointer',
+      fontSize: '12px',
+      fontFamily: T.fontBody,
+      fontStyle: 'italic',
+      textAlign: 'left',
+      width: '100%',
+      transition: 'color 0.12s, background 0.12s',
+    });
+    clearBtn.textContent = '✕  Clear font styling';
+    clearBtn.addEventListener('mouseenter', () => { clearBtn.style.background = 'rgba(253, 251, 245, 0.08)'; clearBtn.style.color = T.bg; });
+    clearBtn.addEventListener('mouseleave', () => { clearBtn.style.background = 'transparent'; clearBtn.style.color = 'rgba(253, 251, 245, 0.7)'; });
+    clearBtn.addEventListener('mousedown', e => {
+      e.preventDefault();
+      restoreSavedRange(savedRange);
+      clearInlineStyleFromSelection('fontFamily');
+      hideSelectionToolbar();
+    });
+    list.appendChild(clearBtn);
 
     flyout.appendChild(list);
   }
