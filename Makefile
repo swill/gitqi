@@ -1,11 +1,16 @@
 # Webby — development and release tooling
-# Requires: git, node (for syntax check), python3 (for local server)
+# Requires: git, node (for syntax check), python3 (for local server), curl (for fonts)
 
 CURRENT_VERSION := $(shell cat VERSION)
 
+# Load local secrets (GOOGLE_FONTS_API_KEY, …) from .env if present.
+# .env is gitignored; see .env.example for the template.
+-include .env
+export
+
 .DEFAULT_GOAL := help
 
-.PHONY: help serve check release
+.PHONY: help serve check release fonts
 
 # ── Help ──────────────────────────────────────────────────────────────────────
 
@@ -16,12 +21,66 @@ help: ## Show available commands
 
 # ── Development ───────────────────────────────────────────────────────────────
 
-serve: ## Start a local HTTP server on port 8080
-	@echo "Serving at http://localhost:8080"
-	python3 -m http.server 8080
+# ── Local dev server ──────────────────────────────────────────────────────────
+#
+# Mirrors GitHub Pages' `Access-Control-Allow-Origin: *` header so webby.js
+# loaded from http://localhost:8080 can fetch google-fonts.json even when the
+# test page is opened via file:// (origin `null`).
+
+define CORS_HTTP_SERVER_PY
+import http.server, socketserver, sys
+PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8080
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def end_headers(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        super().end_headers()
+with socketserver.TCPServer(("", PORT), Handler) as httpd:
+    print(f"Serving at http://localhost:{PORT} (CORS: *)")
+    httpd.serve_forever()
+endef
+export CORS_HTTP_SERVER_PY
+
+serve: ## Start a local HTTP server on port 8080 (CORS enabled)
+	@python3 -c "$$CORS_HTTP_SERVER_PY" 8080
 
 check: ## Validate JavaScript syntax
 	@node --check webby.js && echo "webby.js — syntax OK"
+
+# ── Font manifest ─────────────────────────────────────────────────────────────
+#
+# Fetches the full Google Fonts catalog from the Developer API and writes a
+# normalized manifest to google-fonts.json (sibling to webby.js, served via
+# GitHub Pages at the same base URL).
+#
+# Requires GOOGLE_FONTS_API_KEY in .env (copy .env.example to .env).
+
+define BUILD_FONTS_MANIFEST_PY
+import sys, json
+def weights(variants):
+    ws = set()
+    for v in variants:
+        if v == "regular": ws.add("400")
+        elif v.isdigit():  ws.add(v)
+    return ";".join(sorted(ws, key=int)) or "400"
+data = json.load(sys.stdin)
+# API is called with sort=popularity, so array order IS the popularity ranking.
+# Consumers that want "top N most popular" can just slice from the front.
+out = [
+    {"name": i["family"], "cat": i["category"], "weights": weights(i["variants"])}
+    for i in data["items"]
+]
+json.dump(out, sys.stdout, separators=(",", ":"))
+endef
+export BUILD_FONTS_MANIFEST_PY
+
+fonts: ## Fetch Google Fonts catalog and regenerate google-fonts.json
+ifndef GOOGLE_FONTS_API_KEY
+	$(error GOOGLE_FONTS_API_KEY not set — copy .env.example to .env and fill in your key)
+endif
+	@echo "Fetching Google Fonts catalog..."
+	@curl -fsSL "https://www.googleapis.com/webfonts/v1/webfonts?key=$(GOOGLE_FONTS_API_KEY)&sort=popularity" \
+		| python3 -c "$$BUILD_FONTS_MANIFEST_PY" > google-fonts.json
+	@python3 -c 'import json, sys; print("Wrote google-fonts.json (%d families)" % len(json.load(sys.stdin)))' < google-fonts.json
 
 # ── Release ───────────────────────────────────────────────────────────────────
 #

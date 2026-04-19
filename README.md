@@ -93,7 +93,7 @@ Click **Pages** in the toolbar to open the pages panel. From there you can navig
 Click **Theme** to adjust colours, fonts, spacing, favicon, page title, and meta description. All changes are live. For multi-page sites, colours/fonts/spacing/favicon are synced to every page automatically; page title, description, and keywords stay page-specific.
 
 **Google Fonts**
-In the Typography group, click **＋ Add font variable** to open a picker with ~50 popular Google Fonts. Existing font-family variables show an **Aa** button that opens the same picker. Selecting a font automatically injects the `<link>` into the page (and syncs it to all other pages). When you swap a variable to a different font, the `<link>` for the previous font is removed on the next auto-save so abandoned fonts never accumulate.
+In the Typography group, click **＋ Add font variable** and then **Browse Google Fonts…** to open a modal previewer covering the full Google Fonts catalog (~1,900 families). Existing font-family variables show an **Aa** button that opens the same previewer. Each row renders your sample text in-font; filter by category, search by name, and sort by popularity or A–Z. Fonts in the previewer load lazily as rows scroll into view and never touch your page's `<head>`. Picking a font applies it to the theme and injects the `<link>` for that family only (which then syncs to all other pages). When you swap a variable to a different font, the `<link>` for the previous font is removed on the next auto-save so abandoned fonts never accumulate.
 
 **Undo / Redo**
 The **↩** and **↪** buttons in the toolbar undo and redo structural changes (AI actions, section/page deletions). Keyboard shortcuts: `Ctrl+Z` / `Ctrl+Shift+Z`. Text edits use the browser's native undo.
@@ -249,9 +249,36 @@ make check
 
 # Release a new version and publish to GitHub Pages
 make release VERSION=1.2.0
+
+# Regenerate the Google Fonts manifest (google-fonts.json)
+make fonts
 ```
 
-See the [Makefile](./Makefile) for full details on what `make release` does.
+See the [Makefile](./Makefile) for full details on what each target does.
+
+### Google Fonts manifest
+
+Webby ships a full Google Fonts catalog (`google-fonts.json`, served alongside `webby.js`) so the font picker covers the entire library, not just a curated subset. The manifest is regenerated manually via `make fonts`. At runtime `webby.js` fetches it, caches it in `localStorage`, and falls back to a small built-in list if the fetch fails.
+
+**One-time setup** — needed only if you want to regenerate the manifest yourself:
+
+1. Get a free Google Fonts Developer API key:
+   - Go to the [Google Cloud Console](https://console.cloud.google.com/)
+   - Create (or pick) a project
+   - Enable the **Web Fonts Developer API** under *APIs & Services → Library*
+   - Create a key under *APIs & Services → Credentials → Create Credentials → API key*
+   - Restrict it (recommended): under *API restrictions* pick *Web Fonts Developer API* only
+2. Copy the example file and drop your key in:
+   ```bash
+   cp .env.example .env
+   # then edit .env and set GOOGLE_FONTS_API_KEY=<your-key>
+   ```
+   `.env` is gitignored — the key never lands in the repo.
+3. Generate the manifest:
+   ```bash
+   make fonts
+   ```
+   This fetches the catalog from the Developer API, sorted by popularity, and writes `google-fonts.json` at the repo root — each entry is `{ name, cat, weights }`. Array order is the popularity ranking. Commit the file and it deploys alongside `webby.js` on the next release.
 
 ---
 

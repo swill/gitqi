@@ -538,20 +538,67 @@ openThemeEditor()  ← toggled by Theme toolbar button; mutually exclusive with 
 
 ### 18. Google Fonts
 
-Curated list of ~50 popular families with sensible weight sets, grouped by category (sans-serif, serif, display, handwriting, monospace). Defined in `GOOGLE_FONTS`.
+Full Google Fonts catalog, sorted by popularity. A small curated list is compiled into `webby.js` as a fallback; at runtime `loadGoogleFontsManifest()` fetches the complete catalog from `google-fonts.json` (sibling of `webby.js`, generated via `make fonts`) and replaces the in-memory `GOOGLE_FONTS`. Entries are shaped `{ name, cat, weights }`; array order is popularity rank.
 
 ```
+loadGoogleFontsManifest()   ← called at the top of init()
+  ├── Fast path: read cached manifest from localStorage (key 'webby:fonts-manifest:v1')
+  │     install synchronously if present
+  └── Background fetch: {SCRIPT_BASE_URL}google-fonts.json → installFontsManifest()
+        → write to localStorage on success. Failures are silent; curated fallback remains.
+
 ensureGoogleFontLink(font)
   ├── Upsert <link rel="preconnect" href="https://fonts.googleapis.com">
   ├── Upsert <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   └── Append <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family={name}:wght@{weights}&display=swap">
       (idempotent — skips insertion if a <link> for the family is already present)
 
-makeGoogleFontPicker(onPick)
-  └── Returns a filterable list of GOOGLE_FONTS; click fires onPick(font, fontFamilyStack(font))
-      The picker itself never injects <link>s — callers decide when to commit.
-      (Prevents cancelled / previewed picks from leaking font links into <head>,
-       which the shared-head sync would otherwise push to every page.)
+openFontPreviewer(onPick)   ← modal, replaces the old inline picker
+  ├── Header + close button
+  ├── Sample text input (default "The quick brown fox…"; persisted in localStorage key
+  │       'webby:font-preview-sample'; live-updates only rows whose font has finished
+  │       loading — unloaded rows keep their "…" placeholder until ready)
+  ├── Category pills: All / Sans Serif / Serif / Display / Handwriting / Monospace
+  ├── Search box (filters by name) + sort toggle (Popularity / A–Z)
+  └── Scrolling list of all GOOGLE_FONTS rows.
+      ├── Rows for fonts not yet in previewLoadedFonts render in T.fontBody with a
+      │     "…" placeholder so the whole list paints immediately (no layout thrash,
+      │     no scroll stalls). onPreviewFontReady(name, cb) flips the row to the
+      │     real family + current sample text when the FontFace registers.
+      ├── IntersectionObserver (root=list, rootMargin=240px) collects visible
+      │     fonts into a pending set and flushes them via queuePreviewFontLoad(
+      │     font, priority=true) after a 500ms debounce — a fast scroll past many
+      │     rows doesn't blast the rate-limiter with requests for fonts the user
+      │     already scrolled past.
+      └── Row click → onPick(font, fontFamilyStack(font)); caller commits the <link>
+            via ensureGoogleFontLink(). The previewer itself never calls it, so
+            cancelled / aborted previews don't leak links into <head>.
+
+prewarmFontPreview()   ← called by openThemeEditor()
+  └── Enqueues every GOOGLE_FONTS family in popularity (array) order so that by
+      the time the user opens the picker, most popular families are already
+      rendered. Safe to call repeatedly; the dedup sets make re-calls a no-op.
+
+queuePreviewFontLoad(font, priority)  /  drainPreviewLoadQueue()  /  loadPreviewFont(font)
+  ├── previewLoadedFonts:   Set<string>  ← names whose FontFaces are in document.fonts
+  ├── previewLoadingFonts:  Set<string>  ← names currently fetching / loading
+  ├── previewFailedFonts:   Set<string>  ← names that failed (no retry)
+  ├── previewQueuedFonts:   Set<string>  ← names currently in the queue
+  ├── previewLoadQueue:     font[]       ← FIFO; priority:true enqueues at head
+  ├── previewLoadCallbacks: Map<name, fn[]>  ← row-flip callbacks, fired on load
+  └── Drain tick kicks off PREVIEW_LOAD_BATCH (4) loadPreviewFont() calls every
+      PREVIEW_LOAD_INTERVAL_MS (250ms) ≈ 16 fonts/sec. Each loadPreviewFont:
+        fetch CSS2 URL → regex-parse @font-face blocks for src/weight/style →
+        new FontFace() per variant → Promise.all(face.load() + document.fonts.add())
+        → firePreviewReady(name) drains onPreviewFontReady callbacks.
+      Rate limiting + FontFace API (vs. the old @import-into-<style> approach)
+      is what keeps the toolbar/title from throbbing and the scroll from stalling
+      under load: fonts register directly into document.fonts without mutating
+      the DOM, so only the rows that actually use each family re-cascade.
+
+  No preview state ever reaches disk or deployed output — FontFace registrations
+  are runtime-only (not captured by serializer or snapshots), and the picker
+  does not inject any <link> tags.
 
 pruneUnusedGoogleFontLinks()   ← called at the top of saveChanges() on every auto-save
   ├── extractReferencedFontNames(getAllManagedCSS())  ← scans main <style>, nav style,

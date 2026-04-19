@@ -11,6 +11,12 @@
 
   if (!window.SITE_SECRETS) return;
 
+  // Base URL of this script on disk / CDN — used to locate sibling assets like
+  // google-fonts.json. Captured here while document.currentScript is still valid
+  // (it becomes null after the synchronous IIFE returns).
+  const SCRIPT_SRC = (document.currentScript && document.currentScript.src) || '';
+  const SCRIPT_BASE_URL = SCRIPT_SRC.substring(0, SCRIPT_SRC.lastIndexOf('/') + 1);
+
   // ─── Theme ────────────────────────────────────────────────────────────────
   // Mirrors the webby.swill.io site palette + typography so the editor UI
   // feels stylistically consistent with the marketing site. These values are
@@ -2755,7 +2761,12 @@ RULES:
   // <link rel="stylesheet"> (plus preconnects) into <head>; the sync then
   // propagates those links to every other page.
 
-  const GOOGLE_FONTS = [
+  // This array is the fallback catalog, used if the sibling google-fonts.json
+  // manifest can't be fetched (offline, CORS hiccup, or never generated). At
+  // init we try to replace its contents in place with the full manifest via
+  // loadGoogleFontsManifest() — hence `let` rather than `const`. All consumers
+  // (pickers, ensureGoogleFontLink, prune) read from this single reference.
+  let GOOGLE_FONTS = [
     // Sans-serif
     { name: 'Inter',              cat: 'sans-serif', weights: '300;400;500;600;700' },
     { name: 'Roboto',             cat: 'sans-serif', weights: '300;400;500;700' },
@@ -2812,6 +2823,40 @@ RULES:
     { name: 'Space Mono',         cat: 'monospace',  weights: '400;700' },
     { name: 'DM Mono',            cat: 'monospace',  weights: '400;500' },
   ];
+
+  // Full-catalog manifest loader. Fetches google-fonts.json from the same
+  // directory as webby.js, validates it, and replaces the curated fallback
+  // above. A localStorage copy is installed synchronously on the next load so
+  // the picker shows the full catalog immediately instead of waiting for the
+  // network. On any failure, the curated fallback remains active.
+  const FONTS_MANIFEST_URL = SCRIPT_BASE_URL ? SCRIPT_BASE_URL + 'google-fonts.json' : '';
+  const FONTS_CACHE_KEY = 'webby:fonts-manifest:v1';
+
+  function installFontsManifest(data) {
+    if (!Array.isArray(data) || data.length === 0) return false;
+    const sample = data[0];
+    if (!sample || typeof sample.name !== 'string' || typeof sample.weights !== 'string') return false;
+    GOOGLE_FONTS = data;
+    return true;
+  }
+
+  function loadGoogleFontsManifest() {
+    try {
+      const cached = localStorage.getItem(FONTS_CACHE_KEY);
+      if (cached) installFontsManifest(JSON.parse(cached));
+    } catch (_) { /* ignore cache read errors */ }
+
+    if (!FONTS_MANIFEST_URL) return;
+    fetch(FONTS_MANIFEST_URL, { cache: 'no-cache' })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data && installFontsManifest(data)) {
+          try { localStorage.setItem(FONTS_CACHE_KEY, JSON.stringify(data)); }
+          catch (_) { /* quota exceeded — fine, fetch will refresh next time */ }
+        }
+      })
+      .catch(() => { /* offline or CORS — curated fallback stays active */ });
+  }
 
   const GENERIC_FALLBACK = {
     'sans-serif':  'system-ui, sans-serif',
@@ -2915,107 +2960,388 @@ RULES:
     }
   }
 
-  // Picker component: filterable list of Google Fonts. When clicked, an item
-  // applies the font (injects <link>, calls the caller's `onPick`).
-  function makeGoogleFontPicker(onPick) {
-    const container = el('div');
-    css(container, {
-      marginTop: '6px',
-      border: `1.5px solid ${T.border}`,
-      borderRadius: T.radiusSm,
-      background: '#fff',
-      overflow: 'hidden',
-    });
+  // ─── Font Previewer ───────────────────────────────────────────────────────
+  //
+  // Modal with live rendered previews of the full Google Fonts catalog. Fonts
+  // load via a rate-limited queue using the FontFace API — registrations live
+  // only in document.fonts, so nothing reaches disk, the serializer, the
+  // shared-head sync, or the published site.
+  //
+  // The picker itself is "dumb" — it reports the selection via `onPick` but
+  // does NOT commit <link> tags. Callers decide when to call
+  // ensureGoogleFontLink() so that cancelled / aborted picks don't leak font
+  // links into <head> (which shared-head sync would push to every page).
 
-    const filter = el('input');
-    filter.type = 'text';
-    filter.placeholder = 'Search Google Fonts…';
-    css(filter, {
-      width: '100%',
-      boxSizing: 'border-box',
-      padding: '7px 10px',
-      border: 'none',
-      borderBottom: `1px solid ${T.borderSoft}`,
-      fontSize: '11.5px',
+  const FONT_PREVIEW_SAMPLE_KEY = 'webby:font-preview-sample';
+  const DEFAULT_SAMPLE_TEXT = 'The quick brown fox jumps over the lazy dog';
+  const FONT_CATEGORIES = [
+    { key: 'all',         label: 'All' },
+    { key: 'sans-serif',  label: 'Sans Serif' },
+    { key: 'serif',       label: 'Serif' },
+    { key: 'display',     label: 'Display' },
+    { key: 'handwriting', label: 'Handwriting' },
+    { key: 'monospace',   label: 'Monospace' },
+  ];
+
+  // Rate-limited font preview loader.
+  //
+  // Previously used @import into a growing <style> element, which forced the
+  // browser to re-parse the whole preview stylesheet on every append and
+  // re-cascade every font-related element on the page — that's what caused
+  // the toolbar/title throb and the scroll stalls. The FontFace API registers
+  // fonts directly into document.fonts without any DOM mutation, so only
+  // elements that actually use the new family are affected.
+  //
+  // Flow per font: fetch Google's CSS2 response → parse out the @font-face
+  // src URLs → new FontFace(...) for each weight variant → face.load() →
+  // document.fonts.add(). Load completes with a real Promise, so preview rows
+  // can flip from placeholder to sample text only when their font is truly
+  // rendered.
+
+  const previewLoadedFonts  = new Set();  // names whose FontFaces are registered + rendered
+  const previewLoadingFonts = new Set();  // names currently fetching / loading
+  const previewFailedFonts  = new Set();  // names that failed (won't retry)
+  const previewQueuedFonts  = new Set();  // names currently in the queue
+  const previewLoadQueue    = [];         // pending font objects, FIFO
+  const previewLoadCallbacks = new Map(); // name → [fn, fn, ...] (fired when ready)
+
+  const PREVIEW_LOAD_BATCH = 4;           // concurrent loads per tick
+  const PREVIEW_LOAD_INTERVAL_MS = 250;   // ≈ 16 fonts/sec — gentle on Google + browser
+  let previewLoadTimer = null;
+
+  function onPreviewFontReady(name, callback) {
+    if (previewLoadedFonts.has(name)) { callback(); return; }
+    const list = previewLoadCallbacks.get(name) || [];
+    list.push(callback);
+    previewLoadCallbacks.set(name, list);
+  }
+
+  function firePreviewReady(name) {
+    const cbs = previewLoadCallbacks.get(name);
+    if (!cbs) return;
+    previewLoadCallbacks.delete(name);
+    cbs.forEach(cb => { try { cb(); } catch (_) { /* keep draining on single failure */ } });
+  }
+
+  async function loadPreviewFont(font) {
+    if (previewLoadedFonts.has(font.name) || previewLoadingFonts.has(font.name)) return;
+    previewLoadingFonts.add(font.name);
+    try {
+      const encoded = font.name.replace(/ /g, '+');
+      const url = `https://fonts.googleapis.com/css2?family=${encoded}:wght@${font.weights}&display=swap`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('css fetch failed: ' + res.status);
+      const css = await res.text();
+      // Parse every @font-face block in the response — one per weight variant.
+      const faces = [];
+      const faceRe = /@font-face\s*\{([^}]+)\}/g;
+      let m;
+      while ((m = faceRe.exec(css)) !== null) {
+        const block = m[1];
+        const srcM    = block.match(/src\s*:\s*([^;}]+)/i);
+        const weightM = block.match(/font-weight\s*:\s*([^;]+)/i);
+        const styleM  = block.match(/font-style\s*:\s*([^;]+)/i);
+        if (!srcM) continue;
+        faces.push(new FontFace(font.name, srcM[1].trim(), {
+          weight:  weightM ? weightM[1].trim() : '400',
+          style:   styleM  ? styleM[1].trim()  : 'normal',
+          display: 'swap',
+        }));
+      }
+      if (!faces.length) throw new Error('no @font-face in response');
+      // Load all variants in parallel; register each one as it arrives.
+      await Promise.all(faces.map(f => f.load().then(loaded => document.fonts.add(loaded))));
+      previewLoadedFonts.add(font.name);
+      firePreviewReady(font.name);
+    } catch (_) {
+      previewFailedFonts.add(font.name);
+    } finally {
+      previewLoadingFonts.delete(font.name);
+    }
+  }
+
+  function drainPreviewLoadQueue() {
+    if (!previewLoadQueue.length) { previewLoadTimer = null; return; }
+    for (let i = 0; i < PREVIEW_LOAD_BATCH && previewLoadQueue.length; i++) {
+      const font = previewLoadQueue.shift();
+      previewQueuedFonts.delete(font.name);
+      loadPreviewFont(font); // fire-and-forget; tracks its own state
+    }
+    previewLoadTimer = setTimeout(drainPreviewLoadQueue, PREVIEW_LOAD_INTERVAL_MS);
+  }
+
+  function queuePreviewFontLoad(font, priority) {
+    if (previewLoadedFonts.has(font.name)) return;
+    if (previewLoadingFonts.has(font.name)) return;
+    if (previewFailedFonts.has(font.name))  return;
+    if (previewQueuedFonts.has(font.name)) {
+      if (!priority) return;
+      // Already queued — bump to the head if we're prioritizing it.
+      const idx = previewLoadQueue.findIndex(f => f.name === font.name);
+      if (idx > 0) {
+        previewLoadQueue.splice(idx, 1);
+        previewLoadQueue.unshift(font);
+      }
+      return;
+    }
+    previewQueuedFonts.add(font.name);
+    if (priority) previewLoadQueue.unshift(font);
+    else          previewLoadQueue.push(font);
+    if (!previewLoadTimer) previewLoadTimer = setTimeout(drainPreviewLoadQueue, 0);
+  }
+
+  // Enqueue the full catalog in popularity order so by the time the user
+  // opens the previewer most popular fonts are already rendered. Safe to
+  // call repeatedly — dedup sets make re-calls a no-op.
+  function prewarmFontPreview() {
+    for (const font of GOOGLE_FONTS) queuePreviewFontLoad(font, false);
+  }
+
+  function openFontPreviewer(onPick) {
+    const overlay = el('div', { 'data-editor-ui': '' });
+    css(overlay, {
+      position: 'fixed', inset: '0', zIndex: '999998',
+      background: 'rgba(26, 27, 58, 0.4)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
       fontFamily: T.fontBody,
-      color: T.primary,
-      outline: 'none',
-      background: T.bg,
     });
 
-    const list = el('div');
-    css(list, { maxHeight: '180px', overflowY: 'auto' });
+    const modal = el('div');
+    css(modal, {
+      width: '640px', maxWidth: '92vw', height: '80vh', maxHeight: '760px',
+      background: T.bg, borderRadius: T.radius, boxShadow: T.shadow,
+      display: 'flex', flexDirection: 'column', overflow: 'hidden',
+    });
 
-    const render = query => {
+    // Header
+    const header = el('div');
+    css(header, {
+      padding: '14px 18px', borderBottom: `1px solid ${T.borderSoft}`,
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      flexShrink: '0',
+    });
+    const title = el('h2');
+    title.textContent = 'Font Previewer';
+    css(title, { margin: '0', fontFamily: T.fontHead, fontSize: '18px', fontWeight: '600', color: T.primary });
+    const closeBtn = el('button');
+    closeBtn.textContent = '✕';
+    css(closeBtn, { background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', color: T.textMuted, padding: '4px 10px', lineHeight: '1' });
+    header.append(title, closeBtn);
+
+    // Controls: sample text + category pills + search/sort row
+    const controls = el('div');
+    css(controls, {
+      padding: '12px 18px', borderBottom: `1px solid ${T.borderSoft}`,
+      display: 'flex', flexDirection: 'column', gap: '10px', flexShrink: '0',
+    });
+
+    const sampleInput = el('input');
+    sampleInput.type = 'text';
+    sampleInput.placeholder = 'Sample text';
+    try { sampleInput.value = localStorage.getItem(FONT_PREVIEW_SAMPLE_KEY) || DEFAULT_SAMPLE_TEXT; }
+    catch (_) { sampleInput.value = DEFAULT_SAMPLE_TEXT; }
+    css(sampleInput, {
+      width: '100%', boxSizing: 'border-box', padding: '8px 12px',
+      border: `1.5px solid ${T.border}`, borderRadius: T.radiusSm,
+      fontSize: '14px', fontFamily: T.fontBody, color: T.primary,
+      background: '#fff', outline: 'none',
+    });
+
+    // Category pills
+    const pillRow = el('div');
+    css(pillRow, { display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' });
+    let activeCategory = 'all';
+    const pillEls = {};
+    const stylePill = (btn, active) => {
+      btn.style.background = active ? T.primary : 'transparent';
+      btn.style.color = active ? T.bg : T.primary;
+      btn.style.borderColor = active ? T.primary : T.border;
+    };
+    FONT_CATEGORIES.forEach(({ key, label }) => {
+      const pill = el('button');
+      pill.textContent = label;
+      css(pill, {
+        padding: '5px 11px', borderRadius: T.radiusPill,
+        fontSize: '11.5px', fontFamily: T.fontBody, fontWeight: '500',
+        cursor: 'pointer', border: `1.5px solid ${T.border}`,
+        transition: 'background 0.15s, color 0.15s, border-color 0.15s',
+      });
+      stylePill(pill, key === activeCategory);
+      pill.addEventListener('click', () => {
+        activeCategory = key;
+        Object.entries(pillEls).forEach(([k, b]) => stylePill(b, k === activeCategory));
+        render();
+      });
+      pillEls[key] = pill;
+      pillRow.appendChild(pill);
+    });
+
+    // Search + sort
+    const searchRow = el('div');
+    css(searchRow, { display: 'flex', gap: '8px', alignItems: 'center' });
+    const searchInput = el('input');
+    searchInput.type = 'text';
+    searchInput.placeholder = 'Search by name…';
+    css(searchInput, {
+      flex: '1', padding: '6px 10px',
+      border: `1.5px solid ${T.border}`, borderRadius: T.radiusSm,
+      fontSize: '11.5px', fontFamily: T.fontBody, color: T.primary,
+      background: '#fff', outline: 'none',
+    });
+
+    let sortMode = 'popularity';
+    const sortBtn = el('button');
+    sortBtn.textContent = 'Popularity';
+    css(sortBtn, {
+      padding: '6px 12px', background: 'transparent',
+      border: `1.5px solid ${T.border}`, borderRadius: T.radiusSm,
+      fontSize: '11.5px', fontFamily: T.fontBody, fontWeight: '500',
+      cursor: 'pointer', color: T.primary, whiteSpace: 'nowrap',
+      transition: 'background 0.15s',
+    });
+    sortBtn.addEventListener('mouseenter', () => { sortBtn.style.background = T.bgAlt; });
+    sortBtn.addEventListener('mouseleave', () => { sortBtn.style.background = 'transparent'; });
+    sortBtn.addEventListener('click', () => {
+      sortMode = sortMode === 'popularity' ? 'alpha' : 'popularity';
+      sortBtn.textContent = sortMode === 'popularity' ? 'Popularity' : 'A–Z';
+      render();
+    });
+
+    searchRow.append(searchInput, sortBtn);
+    controls.append(sampleInput, pillRow, searchRow);
+
+    // List
+    const list = el('div');
+    css(list, { flex: '1', overflowY: 'auto', padding: '4px 0' });
+
+    let currentRows = [];
+    // Pending priority-jump queue: items the user has scrolled to, waiting out a
+    // short debounce so fast scrolls don't blast the rate-limiter with requests
+    // for rows the user just passed by.
+    const pendingPriority = new Set();
+    let priorityTimer = null;
+    function flushPriorityQueue() {
+      priorityTimer = null;
+      pendingPriority.forEach(font => queuePreviewFontLoad(font, true));
+      pendingPriority.clear();
+    }
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting && entry.target.__webbyFont) {
+          pendingPriority.add(entry.target.__webbyFont);
+          observer.unobserve(entry.target);
+        }
+      });
+      if (pendingPriority.size) {
+        if (priorityTimer) clearTimeout(priorityTimer);
+        priorityTimer = setTimeout(flushPriorityQueue, 500);
+      }
+    }, { root: list, rootMargin: '240px' });
+
+    function render() {
       list.innerHTML = '';
-      const q = (query || '').toLowerCase().trim();
-      const matches = q
-        ? GOOGLE_FONTS.filter(f => f.name.toLowerCase().includes(q) || f.cat.includes(q))
-        : GOOGLE_FONTS;
-      if (!matches.length) {
+      currentRows = [];
+      const q = searchInput.value.toLowerCase().trim();
+      let fonts = GOOGLE_FONTS;
+      if (activeCategory !== 'all') fonts = fonts.filter(f => f.cat === activeCategory);
+      if (q) fonts = fonts.filter(f => f.name.toLowerCase().includes(q));
+      if (sortMode === 'alpha') fonts = fonts.slice().sort((a, b) => a.name.localeCompare(b.name));
+
+      if (!fonts.length) {
         const empty = el('div');
         empty.textContent = 'No matches';
-        css(empty, { padding: '12px', fontSize: '11.5px', color: T.textMuted, textAlign: 'center', fontStyle: 'italic' });
+        css(empty, { padding: '24px', fontSize: '13px', color: T.textMuted, textAlign: 'center', fontStyle: 'italic' });
         list.appendChild(empty);
         return;
       }
-      matches.forEach(font => {
-        const item = el('div');
-        css(item, {
-          padding: '8px 12px',
-          fontSize: '13.5px',
-          color: T.primary,
-          cursor: 'pointer',
+
+      const sample = sampleInput.value || DEFAULT_SAMPLE_TEXT;
+      fonts.forEach(font => {
+        const row = el('div');
+        row.__webbyFont = font;
+        css(row, {
+          display: 'flex', alignItems: 'center', gap: '14px',
+          padding: '10px 18px', cursor: 'pointer',
           borderBottom: `1px solid ${T.borderSoft}`,
-          fontFamily: fontFamilyStack(font),
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'baseline',
-          gap: '8px',
           transition: 'background 0.12s',
         });
-        // Note: we don't auto-load fonts for preview — that would inject a
-        // <link> for every font in the list and the shared-head sync would
-        // push all of them to every other page. Previews render in the
-        // fallback stack until the user actually picks a font.
 
-        const label = el('span');
-        label.textContent = font.name;
-        css(label, { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
-
-        const tag = el('span');
-        tag.textContent = font.cat;
-        css(tag, {
-          fontSize: '9px',
+        const nameEl = el('div');
+        nameEl.textContent = font.name;
+        css(nameEl, {
+          width: '140px', flexShrink: '0',
+          fontSize: '11.5px', fontFamily: T.fontBody, fontWeight: '500',
           color: T.textMuted,
-          fontFamily: T.fontBody,
-          textTransform: 'uppercase',
-          letterSpacing: '0.08em',
-          flexShrink: '0',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         });
 
-        item.append(label, tag);
+        // Rows for not-yet-loaded fonts render in the default body font with a
+        // "…" placeholder — this lets the entire list paint immediately so
+        // scrolling stays smooth. Once the FontFace is registered, we flip the
+        // row to the real font and replace "…" with the current sample text.
+        const loaded = previewLoadedFonts.has(font.name);
+        const sampleEl = el('div');
+        sampleEl.textContent = loaded ? sample : '…';
+        css(sampleEl, {
+          flex: '1', minWidth: '0',
+          fontSize: '20px', lineHeight: '1.3', color: loaded ? T.primary : T.textMuted,
+          fontFamily: loaded ? fontFamilyStack(font) : T.fontBody,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        });
+        if (!loaded) {
+          onPreviewFontReady(font.name, () => {
+            sampleEl.textContent = sampleInput.value || DEFAULT_SAMPLE_TEXT;
+            sampleEl.style.fontFamily = fontFamilyStack(font);
+            sampleEl.style.color = T.primary;
+          });
+        }
 
-        item.addEventListener('mouseenter', () => { item.style.background = T.bgAlt; });
-        item.addEventListener('mouseleave', () => { item.style.background = ''; });
-
-        // The picker is "dumb" — it reports the selection but does NOT inject
-        // the <link> tag. The caller decides when to commit (e.g. on Add) so
-        // that cancelled / aborted picks don't leak font links into <head>
-        // (which the shared-head sync would then push to every page).
-        item.addEventListener('click', () => {
+        row.append(nameEl, sampleEl);
+        row.addEventListener('mouseenter', () => { row.style.background = T.bgAlt; });
+        row.addEventListener('mouseleave', () => { row.style.background = ''; });
+        row.addEventListener('click', () => {
           if (onPick) onPick(font, fontFamilyStack(font));
+          close();
         });
 
-        list.appendChild(item);
+        list.appendChild(row);
+        currentRows.push(row);
+        observer.observe(row);
       });
-    };
+    }
 
-    filter.addEventListener('input', () => render(filter.value));
-    render('');
+    sampleInput.addEventListener('input', () => {
+      const v = sampleInput.value || DEFAULT_SAMPLE_TEXT;
+      try { localStorage.setItem(FONT_PREVIEW_SAMPLE_KEY, sampleInput.value); } catch (_) {}
+      // Only update rows whose font has already loaded — unloaded rows keep
+      // their "…" placeholder until the font arrives, then pick up the latest
+      // sample via the onPreviewFontReady callback.
+      currentRows.forEach(r => {
+        if (r.children[1] && previewLoadedFonts.has(r.__webbyFont.name)) {
+          r.children[1].textContent = v;
+        }
+      });
+    });
+    searchInput.addEventListener('input', render);
 
-    container.append(filter, list);
-    return container;
+    modal.append(header, controls, list);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    function close() {
+      observer.disconnect();
+      if (priorityTimer) { clearTimeout(priorityTimer); priorityTimer = null; }
+      pendingPriority.clear();
+      overlay.remove();
+      document.removeEventListener('keydown', onKey);
+    }
+    function onKey(e) { if (e.key === 'Escape') close(); }
+    closeBtn.addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    document.addEventListener('keydown', onKey);
+
+    render();
+    setTimeout(() => sampleInput.focus(), 0);
   }
 
   // ─── Theme Editor ─────────────────────────────────────────────────────────
@@ -3028,6 +3354,11 @@ RULES:
     // Close pages panel if open (they occupy the same side-panel slot)
     const pagesPanel = document.getElementById('__webby-pages-panel');
     if (pagesPanel) pagesPanel.remove();
+
+    // Start prewarming the font preview cache. By the time the user opens the
+    // font picker, most popular fonts are already rendered; scroll-into-view
+    // still jumps the queue for anything not yet loaded.
+    prewarmFontPreview();
 
     const styleEl = document.querySelector('style');
     if (!styleEl) {
@@ -3533,17 +3864,32 @@ RULES:
           valueInput.placeholder = "'Playfair Display', serif";
           css(valueInput, { width: '100%', boxSizing: 'border-box', padding: '5px 8px', border: `1.5px solid ${T.border}`, borderRadius: T.radiusSm, fontSize: '11px', fontFamily: T.fontMono, marginBottom: '6px', background: '#fff', color: T.primary, outline: 'none' });
 
-          // Row 3: Google Fonts picker — fills in the value + auto-suggests a variable
-          // name. The <link> is injected on commit (doAdd), not on preview click.
+          // Row 3: "Browse fonts" button — opens the font previewer modal.
+          // Selection fills in the value + auto-suggests a variable name. The
+          // <link> is injected on commit (doAdd), not on preview click.
           let pickedFont = null;
-          const picker = makeGoogleFontPicker((font, value) => {
-            pickedFont = font;
-            valueInput.value = value;
-            if (!nameInput.value.trim()) {
-              nameInput.value = font.name.toLowerCase().replace(/ /g, '-');
-            }
+          const browseBtn = el('button');
+          browseBtn.textContent = 'Browse Google Fonts…';
+          css(browseBtn, {
+            width: '100%', boxSizing: 'border-box',
+            padding: '7px 10px', marginBottom: '6px',
+            background: 'transparent', border: `1.5px solid ${T.border}`,
+            borderRadius: T.radiusSm,
+            fontSize: '11.5px', fontFamily: T.fontBody, fontWeight: '500',
+            color: T.primary, cursor: 'pointer', textAlign: 'center',
+            transition: 'background 0.15s, border-color 0.15s',
           });
-          css(picker, { marginBottom: '6px' });
+          browseBtn.addEventListener('mouseenter', () => { browseBtn.style.background = T.bgAlt; browseBtn.style.borderColor = T.accent2; });
+          browseBtn.addEventListener('mouseleave', () => { browseBtn.style.background = 'transparent'; browseBtn.style.borderColor = T.border; });
+          browseBtn.addEventListener('click', () => {
+            openFontPreviewer((font, value) => {
+              pickedFont = font;
+              valueInput.value = value;
+              if (!nameInput.value.trim()) {
+                nameInput.value = font.name.toLowerCase().replace(/ /g, '-');
+              }
+            });
+          });
           // If the user types a custom value, the picked-font link is no longer
           // accurate — clear the tracked pick so we don't inject an unused link.
           valueInput.addEventListener('input', () => {
@@ -3567,7 +3913,7 @@ RULES:
           cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.background = 'transparent'; });
 
           btnRow.append(confirmBtn, cancelBtn);
-          form.append(nameRow, valueInput, picker, btnRow);
+          form.append(nameRow, valueInput, browseBtn, btnRow);
           section.appendChild(form);
           nameInput.focus();
 
@@ -3694,10 +4040,6 @@ RULES:
         return row;
       }
 
-      // Wrapper holds the row + (when toggled open) the picker beneath.
-      // Row keeps its own marginBottom so rows stay spaced whether or not picker is open.
-      const wrapper = el('div');
-
       const toggleBtn = el('button');
       toggleBtn.textContent = 'Aa';
       toggleBtn.title = 'Pick a Google Font';
@@ -3716,36 +4058,22 @@ RULES:
         flexShrink: '0',
         transition: 'background 0.15s, border-color 0.15s',
       });
+      toggleBtn.addEventListener('mouseenter', () => { toggleBtn.style.background = T.bgAlt; toggleBtn.style.borderColor = T.accent2; });
+      toggleBtn.addEventListener('mouseleave', () => { toggleBtn.style.background = '#fff';   toggleBtn.style.borderColor = T.border; });
 
       // Narrow the value input so there's room for the toggle button
       css(input, { width: '84px' });
 
       row.append(label, input, toggleBtn);
 
-      let pickerEl = null;
       toggleBtn.addEventListener('click', () => {
-        if (pickerEl) {
-          pickerEl.remove();
-          pickerEl = null;
-          toggleBtn.style.background = '#fff';
-          toggleBtn.style.borderColor = T.border;
-          return;
-        }
-        toggleBtn.style.background = T.accent2;
-        toggleBtn.style.borderColor = 'transparent';
-        pickerEl = makeGoogleFontPicker((font, value) => {
+        openFontPreviewer((font, value) => {
           applyValue(value);
           ensureGoogleFontLink(font);
-          pickerEl.remove();
-          pickerEl = null;
-          toggleBtn.style.background = '#fff';
-          toggleBtn.style.borderColor = T.border;
         });
-        wrapper.appendChild(pickerEl);
       });
 
-      wrapper.prepend(row);
-      return wrapper;
+      return row;
     }
 
     return row;
@@ -4714,6 +5042,7 @@ RULES:
   // ─── Init ─────────────────────────────────────────────────────────────────
 
   async function init() {
+    loadGoogleFontsManifest();
     injectToolbar();
     activateZones();
     activateNav();
