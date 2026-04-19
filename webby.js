@@ -1410,7 +1410,7 @@ RULES:
       padding: '6px 18px',
       background: 'rgba(26, 27, 58, 0.82)',
       color: T.bg,
-      border: `1.5px dashed ${T.accent3}`,
+      border: `1.5px solid ${T.accent3}`,
       borderRadius: T.radiusPill,
       cursor: 'pointer',
       fontSize: '11.5px',
