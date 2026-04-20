@@ -27,7 +27,7 @@ GitQi has two modes:
 ## Two paths
 
 - **🔑 Get Key** — first-time setup for site owners. About 30 minutes the first time, one click forever after. Summarised below; walked through with screenshots at [gitqi.com/get-key.html](https://gitqi.com/get-key.html).
-- **气 Git Qi** — the advanced path. How GitQi works under the hood, how to pin or self-host `gitqi.js`, how to fork and release. Covered in [Advanced](#-the-git-qi-path--advanced) and at [gitqi.com/git-qi.html](https://gitqi.com/git-qi.html).
+- **气 Git Qi** — the advanced path. How GitQi works under the hood, how to pin or self-host `gitqi.js`, how to fork and release. Covered in [Advanced](#气-the-git-qi-path--advanced) and at [gitqi.com/git-qi.html](https://gitqi.com/git-qi.html).
 
 ---
 
@@ -73,10 +73,10 @@ In the same folder as your `index.html`, create a plain-text file named `secrets
 ```js
 // secrets.js — lives beside your HTML, never published
 window.SITE_SECRETS = {
-  geminiKey:   "AIza...",              // your Google AI key (Step 4)
-  githubToken: "ghp_...",              // your GitHub token (Step 3)
-  repo:        "username/my-site",     // your GitHub user / repo name
-  branch:      "main"
+  geminiKey: "AIza...", // your Google AI key (Step 4)
+  githubToken: "ghp_...", // your GitHub token (Step 3)
+  repo: "username/my-site", // your GitHub user / repo name
+  branch: "main",
 };
 ```
 
@@ -97,6 +97,7 @@ Open `index.html` in **Chrome** or **Edge** (drag it into a browser window, or r
 A banner appears prompting you to **Select Folder** — pick the folder containing your HTML. This links GitQi to your files so every edit auto-saves within ~1.5 seconds. The link persists across sessions (one permission prompt per session).
 
 Edit anything:
+
 - Click any text and type
 - Select text for the formatting toolbar (bold, italic, color, font, size, code, link)
 - Click any image to replace it
@@ -112,7 +113,7 @@ When you're ready, click **Publish** in the toolbar. GitQi strips all editor cod
 
 In your repo on GitHub: **Settings → Pages → Source → Deploy from a branch**. Set branch to `main`, folder to `/ (root)`, click **Save**.
 
-GitHub shows a banner: *"Your site is live at https://your-username.github.io/your-repo-name/"*. The first deploy takes about a minute.
+GitHub shows a banner: _"Your site is live at https://your-username.github.io/your-repo-name/"_. The first deploy takes about a minute.
 
 🎉 **You're in.** From here on, the loop is: open `index.html`, edit, click **Publish**. No terminal, no git, no CMS, no monthly bill.
 
@@ -122,22 +123,24 @@ GitHub shows a banner: *"Your site is live at https://your-username.github.io/yo
 
 **Text** — click any `data-editable` element and type directly.
 
-**Text formatting** — select text to reveal a floating toolbar. Buttons: **B** (bold), *I* (italic), 🎨 (color — theme swatches, custom picker, or remove), **Aa** (font — theme font vars or clear), **A↕** (font size — em-relative presets from Smaller to Huge), `</>` (inline code), 🔗 (link).
+**Text formatting** — select text to reveal a floating toolbar. Buttons: **B** (bold), _I_ (italic), 🎨 (color — theme swatches, custom picker, or remove), **Aa** (font — theme font vars or clear), **A↕** (font size — em-relative presets from Smaller to Huge), `</>` (inline code), 🔗 (link).
 
 **Links** — click any link (body or nav) to open the popover. Fields: display text, URL, **Go to link →** (preview), page/section picker (jumps to any page or `#anchor` across your site), open-in-new-tab toggle, remove-link.
 
 **Images** — click any `data-editable-image` element to replace it. The file is written to your local `assets/` folder and queued for GitHub upload on the next publish.
 
 **Sections**
+
 - Hover between sections → **+ Add Section** (AI-generate a themed new section)
 - Hover a section → **⟳ Reformat** (restructure layout with AI; existing content preserved)
 - Hover a section → **✕ Delete Section**
 
 **Navigation** — hover the nav → **⟳ Reformat Nav** (AI restructure). Changes sync to every other page automatically.
 
-**Pages** *(multi-page sites)* — click **Pages** in the toolbar. Navigate between pages, generate a new AI page, or delete a page. New page links are added to the nav and propagated to every page.
+**Pages** _(multi-page sites)_ — click **Pages** in the toolbar. Navigate between pages, generate a new AI page, or delete a page. New page links are added to the nav and propagated to every page.
 
 **Theme** — click **Theme** for live controls over:
+
 - Site identity: favicon, page title, meta description, keywords (title/description/keywords are per-page; everything else is site-wide)
 - CSS variables, grouped as Colors / Typography / Spacing / Layout
 - Google Fonts: **Browse Google Fonts…** opens a modal covering the full catalog (~1,900 families), lazy-loaded as rows scroll in, with category filter, name search, and popularity / A–Z sort. Picking a font injects only the `<link>` for that family. Abandoned fonts are pruned from `<head>` on the next auto-save.
@@ -150,12 +153,12 @@ GitHub shows a banner: *"Your site is live at https://your-username.github.io/yo
 
 GitQi uses data attributes to identify editable regions. The AI-generated HTML includes them automatically; if you're hand-authoring, here's the reference.
 
-| Attribute | Applied to | Purpose |
-|---|---|---|
-| `data-zone` | `<section>` | Marks a top-level editable section. Value is a slug, e.g. `"hero"`. Also used as the element `id` for anchor links. |
-| `data-zone-label` | `<section>` | Human-readable label shown in the delete confirmation, e.g. `"Hero"`. |
-| `data-editable` | Any text element | Makes the element directly editable via `contenteditable`. |
-| `data-editable-image` | `<img>` | Makes the image replaceable by clicking. |
+| Attribute             | Applied to       | Purpose                                                                                                             |
+| --------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `data-zone`           | `<section>`      | Marks a top-level editable section. Value is a slug, e.g. `"hero"`. Also used as the element `id` for anchor links. |
+| `data-zone-label`     | `<section>`      | Human-readable label shown in the delete confirmation, e.g. `"Hero"`.                                               |
+| `data-editable`       | Any text element | Makes the element directly editable via `contenteditable`.                                                          |
+| `data-editable-image` | `<img>`          | Makes the image replaceable by clicking.                                                                            |
 
 **Minimal example:**
 
@@ -187,9 +190,13 @@ Multi-page sites use a `gitqi-pages.json` manifest in the site folder alongside 
 ```json
 {
   "pages": [
-    { "file": "index.html",    "title": "Home — My Site",      "navLabel": "Home" },
-    { "file": "about.html",    "title": "About — My Site",     "navLabel": "About" },
-    { "file": "services.html", "title": "Services — My Site",  "navLabel": "Services" }
+    { "file": "index.html", "title": "Home — My Site", "navLabel": "Home" },
+    { "file": "about.html", "title": "About — My Site", "navLabel": "About" },
+    {
+      "file": "services.html",
+      "title": "Services — My Site",
+      "navLabel": "Services"
+    }
   ]
 }
 ```
@@ -199,6 +206,7 @@ GitQi creates and maintains this file automatically. It's pushed to GitHub on ev
 **Shared head + nav sync** — on every auto-save, GitQi compares the current page's shared elements against a snapshot from the last sync. If anything changed, the updated elements are written to every other page file on disk automatically.
 
 Synced site-wide:
+
 - `<nav>` (including nav-specific CSS in `<style id="__gitqi-nav-styles">`)
 - Main `<style>` block (CSS variables + base styles edited via the Theme panel)
 - `<link rel="icon">` and `<link rel="apple-touch-icon">` (favicon)
@@ -328,9 +336,9 @@ GitQi ships a full Google Fonts catalog (`google-fonts.json`, served alongside `
 1. Get a free Google Fonts Developer API key:
    - Go to the [Google Cloud Console](https://console.cloud.google.com/)
    - Create (or pick) a project
-   - Enable the **Web Fonts Developer API** under *APIs & Services → Library*
-   - Create a key under *APIs & Services → Credentials → Create Credentials → API key*
-   - Restrict it (recommended): under *API restrictions* pick *Web Fonts Developer API* only
+   - Enable the **Web Fonts Developer API** under _APIs & Services → Library_
+   - Create a key under _APIs & Services → Credentials → Create Credentials → API key_
+   - Restrict it (recommended): under _API restrictions_ pick _Web Fonts Developer API_ only
 2. Copy the example file and drop your key in:
    ```bash
    cp .env.example .env
@@ -360,12 +368,12 @@ The source is yours to read, fork, and improve. Issues and pull requests welcome
 
 ## Compatibility
 
-| Browser | Edit mode | Public site |
-|---|---|---|
-| Chrome 86+ | ✓ | ✓ |
-| Edge 86+ | ✓ | ✓ |
-| Safari | ✗ | ✓ |
-| Firefox | ✗ | ✓ |
+| Browser    | Edit mode | Public site |
+| ---------- | --------- | ----------- |
+| Chrome 86+ | ✓         | ✓           |
+| Edge 86+   | ✓         | ✓           |
+| Safari     | ✗         | ✓           |
+| Firefox    | ✗         | ✓           |
 
 Edit mode requires the [File System Access API](https://developer.mozilla.org/en-US/docs/Web/API/File_System_Access_API). The published site is plain HTML and works everywhere.
 
