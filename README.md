@@ -192,11 +192,7 @@ Multi-page sites use a `gitqi-pages.json` manifest in the site folder alongside 
   "pages": [
     { "file": "index.html", "title": "Home — My Site", "navLabel": "Home" },
     { "file": "about.html", "title": "About — My Site", "navLabel": "About" },
-    {
-      "file": "services.html",
-      "title": "Services — My Site",
-      "navLabel": "Services"
-    }
+    { "file": "services.html", "title": "Services — My Site", "navLabel": "Services" }
   ]
 }
 ```
