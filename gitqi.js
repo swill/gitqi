@@ -895,6 +895,7 @@
       // which breaks styling and leaves new content without data-editable.
       // Force <br> instead so inline text elements stay flat.
       node.addEventListener('keydown', preventBlockOnEnter);
+      bindEmptyRemoveToEditable(node);
     });
     // Bind image handlers to ALL images in the zone — not just those with
     // data-editable-image, so bootstrap-generated images are always editable.
@@ -924,6 +925,230 @@
       node.removeAttribute('spellcheck');
     });
     document.querySelectorAll('[data-editor-ui]').forEach(el => el.remove());
+  }
+
+  // ─── Empty editable remove control ────────────────────────────────────────
+  // When a user deletes all content from a [data-editable] element, the element
+  // itself still occupies layout space. Show a floating ✕ button while the
+  // element is empty + focused/hovered so the owner can remove it entirely.
+
+  const emptyBoundNodes = new WeakSet();
+  let emptyRemoveBtn = null;
+  let emptyRemoveTarget = null;
+  let emptyRepositionBound = false;
+
+  function isEditableEmpty(node) {
+    if (!node || !node.isConnected) return false;
+    if (node.textContent && node.textContent.trim() !== '') return false;
+    if (node.querySelector('img, svg, iframe, video, picture, canvas')) return false;
+    return true;
+  }
+
+  function getOrCreateEmptyRemoveBtn() {
+    if (emptyRemoveBtn) return emptyRemoveBtn;
+    const btn = el('button', { 'data-editor-ui': '', type: 'button', title: 'Remove empty element' });
+    btn.textContent = '✕';
+    css(btn, {
+      position: 'absolute',
+      zIndex: '999999',
+      width: '22px',
+      height: '22px',
+      padding: '0',
+      background: T.accent4,
+      color: '#fff',
+      border: 'none',
+      borderRadius: '999px',
+      cursor: 'pointer',
+      fontSize: '12px',
+      lineHeight: '22px',
+      fontFamily: T.fontBody,
+      fontWeight: '700',
+      boxShadow: '0 6px 14px -6px rgba(244, 114, 182, 0.55)',
+      display: 'none',
+      alignItems: 'center',
+      justifyContent: 'center',
+      transition: 'background 0.15s ease, transform 0.15s ease',
+    });
+    // Prevent the button from stealing focus from the editable before we handle click
+    btn.addEventListener('mousedown', e => e.preventDefault());
+    btn.addEventListener('mouseenter', () => { btn.style.background = T.danger; btn.style.transform = 'scale(1.08)'; });
+    btn.addEventListener('mouseleave', () => { btn.style.background = T.accent4; btn.style.transform = 'scale(1)'; });
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      e.preventDefault();
+      const target = emptyRemoveTarget;
+      if (!target) return;
+      hideEmptyRemoveBtn();
+      confirmRemoveEmptyEditable(target);
+    });
+    document.body.appendChild(btn);
+    emptyRemoveBtn = btn;
+
+    if (!emptyRepositionBound) {
+      emptyRepositionBound = true;
+      window.addEventListener('scroll', refreshEmptyRemove, true);
+      window.addEventListener('resize', refreshEmptyRemove);
+    }
+    return btn;
+  }
+
+  function positionEmptyRemoveBtn(node) {
+    const btn = getOrCreateEmptyRemoveBtn();
+    const rect = node.getBoundingClientRect();
+    // Anchor to the top-right corner of the element; nudge so half the badge
+    // overhangs the outside of the element the way a "remove" chip usually does.
+    const top = window.scrollY + rect.top - 11;
+    const left = window.scrollX + rect.right - 11;
+    btn.style.top = top + 'px';
+    btn.style.left = left + 'px';
+    btn.style.display = 'flex';
+  }
+
+  function showEmptyRemoveFor(node) {
+    if (!isEditableEmpty(node)) { hideEmptyRemoveBtn(); return; }
+    emptyRemoveTarget = node;
+    positionEmptyRemoveBtn(node);
+  }
+
+  function hideEmptyRemoveBtn() {
+    if (emptyRemoveBtn) emptyRemoveBtn.style.display = 'none';
+    emptyRemoveTarget = null;
+  }
+
+  function refreshEmptyRemove() {
+    if (!emptyRemoveTarget) return;
+    if (!emptyRemoveTarget.isConnected || !isEditableEmpty(emptyRemoveTarget)) {
+      hideEmptyRemoveBtn();
+    } else {
+      positionEmptyRemoveBtn(emptyRemoveTarget);
+    }
+  }
+
+  function bindEmptyRemoveToEditable(node) {
+    if (emptyBoundNodes.has(node)) return;
+    emptyBoundNodes.add(node);
+    node.addEventListener('focus', () => showEmptyRemoveFor(node));
+    node.addEventListener('input', () => {
+      if (emptyRemoveTarget === node || document.activeElement === node) {
+        showEmptyRemoveFor(node);
+      }
+    });
+    node.addEventListener('blur', () => {
+      // Delay so a click on the button still has a valid target. The button's
+      // mousedown preventDefault keeps focus on the editable in most browsers,
+      // but on blur from keyboard navigation we still want to dismiss.
+      setTimeout(() => {
+        if (emptyRemoveTarget === node && document.activeElement !== node) {
+          hideEmptyRemoveBtn();
+        }
+      }, 150);
+    });
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
+  }
+
+  // Themed replacement for window.confirm. titleHTML / messageHTML are inserted
+  // as HTML — callers must escapeHtml() any user-supplied text.
+  function openConfirmDialog({ titleHTML, messageHTML, confirmLabel = 'Confirm', accent = T.accent4, onConfirm }) {
+    const overlay = el('div', { 'data-editor-ui': '' });
+    css(overlay, {
+      position: 'fixed',
+      inset: '0',
+      background: 'rgba(26, 27, 58, 0.65)',
+      zIndex: '1000000',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      fontFamily: T.fontBody,
+    });
+
+    const modal = el('div');
+    css(modal, {
+      background: T.bg,
+      borderRadius: T.radius,
+      padding: '28px 30px',
+      width: '440px',
+      maxWidth: '92vw',
+      fontFamily: T.fontBody,
+      boxShadow: T.shadow,
+      position: 'relative',
+      overflow: 'hidden',
+      borderTop: `5px solid ${accent}`,
+    });
+
+    modal.innerHTML = `
+      <h3 style="margin:0 0 8px;font-size:20px;color:${T.primary};font-family:${T.fontHead};font-weight:600;letter-spacing:-0.02em;line-height:1.2">
+        ${titleHTML}
+      </h3>
+      <p style="margin:0 0 18px;font-size:13.5px;color:${T.textMuted};line-height:1.55">
+        ${messageHTML}
+      </p>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button data-role="cancel"
+          style="padding:9px 20px;border:1.5px solid ${T.border};background:transparent;border-radius:${T.radiusPill};
+                 cursor:pointer;font-size:13px;font-family:${T.fontBody};font-weight:500;color:${T.primary};
+                 transition:background 0.18s ease, border-color 0.18s ease;">
+          Cancel
+        </button>
+        <button data-role="confirm"
+          style="padding:9px 22px;background:${accent};color:#fff;border:2px solid transparent;
+                 border-radius:${T.radiusPill};cursor:pointer;font-size:13px;font-weight:600;
+                 font-family:${T.fontBody};letter-spacing:-0.005em;
+                 box-shadow:0 10px 22px -10px rgba(244, 114, 182, 0.55);
+                 transition:background 0.18s ease, transform 0.18s ease;">
+          ${escapeHtml(confirmLabel)}
+        </button>
+      </div>
+    `;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const cancelBtn = modal.querySelector('[data-role="cancel"]');
+    const confirmBtn = modal.querySelector('[data-role="confirm"]');
+    cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = T.bgAlt; });
+    cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.background = 'transparent'; });
+    confirmBtn.addEventListener('mouseenter', () => { confirmBtn.style.background = T.danger; confirmBtn.style.transform = 'translateY(-1px)'; });
+    confirmBtn.addEventListener('mouseleave', () => { confirmBtn.style.background = accent; confirmBtn.style.transform = 'translateY(0)'; });
+    confirmBtn.focus();
+
+    function escHandler(e) {
+      if (e.key === 'Escape') close();
+    }
+    const close = () => {
+      overlay.remove();
+      document.removeEventListener('keydown', escHandler);
+    };
+
+    cancelBtn.addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    document.addEventListener('keydown', escHandler);
+
+    confirmBtn.addEventListener('click', () => {
+      close();
+      if (onConfirm) onConfirm();
+    });
+  }
+
+  function confirmRemoveEmptyEditable(node) {
+    if (!node || !node.isConnected) return;
+    const tagName = node.tagName.toLowerCase();
+    openConfirmDialog({
+      titleHTML: `Remove empty <span style="color:${T.accent4};font-style:italic">&lt;${escapeHtml(tagName)}&gt;</span>?`,
+      messageHTML: 'This element has no content and will be deleted from the page. You can undo with Ctrl+Z.',
+      confirmLabel: 'Remove element',
+      onConfirm: () => {
+        if (!node.isConnected) return;
+        snapshotForUndo();
+        node.remove();
+        hideEmptyRemoveBtn();
+        setDirty(true);
+      },
+    });
   }
 
   function injectDeleteButton(section) {
@@ -976,20 +1201,27 @@
     btn.addEventListener('click', e => {
       e.stopPropagation();
       const label = section.dataset.zoneLabel || section.dataset.zone || 'this section';
-      if (!confirm(`Delete "${label}"?`)) return;
-      snapshotForUndo();
-      // Clean up adjacent add-button
-      const next = section.nextElementSibling;
-      if (next && next.classList.contains('__gitqi-add-wrap')) next.remove();
-      // Clean up any section-specific style block
-      const slug = section.dataset.zone;
-      if (slug) {
-        const sectionStyle = document.getElementById('__gitqi-section-' + slug + '-styles');
-        if (sectionStyle) sectionStyle.remove();
-      }
-      section.remove();
-      setDirty(true);
-      refreshAddButtons();
+      openConfirmDialog({
+        titleHTML: `Delete <span style="color:${T.accent4};font-style:italic">${escapeHtml(label)}</span>?`,
+        messageHTML: 'This section will be removed from the page. You can undo with Ctrl+Z.',
+        confirmLabel: 'Delete section',
+        onConfirm: () => {
+          if (!section.isConnected) return;
+          snapshotForUndo();
+          // Clean up adjacent add-button
+          const next = section.nextElementSibling;
+          if (next && next.classList.contains('__gitqi-add-wrap')) next.remove();
+          // Clean up any section-specific style block
+          const slug = section.dataset.zone;
+          if (slug) {
+            const sectionStyle = document.getElementById('__gitqi-section-' + slug + '-styles');
+            if (sectionStyle) sectionStyle.remove();
+          }
+          section.remove();
+          setDirty(true);
+          refreshAddButtons();
+        },
+      });
     });
 
     if (getComputedStyle(section).position === 'static') {
@@ -1760,11 +1992,17 @@ RULES:
         });
         delBtn.addEventListener('mouseenter', () => { delBtn.style.background = T.accent4; delBtn.style.color = '#fff'; delBtn.style.borderColor = 'transparent'; });
         delBtn.addEventListener('mouseleave', () => { delBtn.style.background = 'transparent'; delBtn.style.color = T.textMuted; delBtn.style.borderColor = T.borderSoft; });
-        delBtn.addEventListener('click', async () => {
+        delBtn.addEventListener('click', () => {
           const label = page.navLabel || page.title || page.file;
-          if (!confirm(`Delete "${label}" (${page.file})?\n\nThis will remove the page and all nav links pointing to it. This cannot be undone.`)) return;
-          panel.remove();
-          await deletePageFromSite(page);
+          openConfirmDialog({
+            titleHTML: `Delete <span style="color:${T.accent4};font-style:italic">${escapeHtml(label)}</span>?`,
+            messageHTML: `This will remove <strong style="color:${T.primary}">${escapeHtml(page.file)}</strong> and all nav links pointing to it. <strong style="color:${T.primary}">This cannot be undone.</strong>`,
+            confirmLabel: 'Delete page',
+            onConfirm: async () => {
+              panel.remove();
+              await deletePageFromSite(page);
+            },
+          });
         });
 
         row.append(openBtn, delBtn);
