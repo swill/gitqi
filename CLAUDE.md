@@ -461,9 +461,9 @@ AI-powered layout restructuring for individual sections. Preserves content (text
 promptReformatSection(section)  ← triggered by ⟳ hover button on section
   └── Modal: describe layout change → on submit → snapshotForUndo() → reformatSection()
 
-reformatSection(section, description)
+reformatSection(section, description, { model })
   ├── buildReformatPrompt() — sends: main style block + section-specific CSS + clean section HTML
-  ├── callGeminiAPI(prompt)
+  ├── callGeminiWithFallback(prompt, { model })  ← see §13a
   ├── parseSectionResponse() — expects <section-css>...</section-css> <section-html>...</section-html>
   ├── Upsert <style id="__gitqi-section-{slug}-styles"> for the returned CSS
   └── section.replaceWith(newSection) → activateZone(newSection)
@@ -477,9 +477,9 @@ AI-powered navigation restructuring. Makes minimal targeted changes; syncs immed
 activateNav()
   └── Injects ⟳ Reformat Nav hover button; marks nav with data-gitqi-nav-bound
 
-promptReformatNav(nav) → snapshotForUndo() → reformatNav(nav, description)
+promptReformatNav(nav) → snapshotForUndo() → reformatNav(nav, description, { model })
   ├── buildReformatNavPrompt() — sends: style block + existing nav-specific CSS + nav HTML
-  ├── callGeminiAPI(prompt)
+  ├── callGeminiWithFallback(prompt, { model })  ← see §13a
   ├── parseNavResponse() — expects <nav-html>...</nav-html> + optional <nav-css>...</nav-css>
   │     (AI omits <nav-css> for content-only changes like adding/removing a link)
   ├── Upsert <style id="__gitqi-nav-styles"> only if CSS was returned
@@ -513,11 +513,11 @@ openPagesPanel()  ← toggled by Pages toolbar button
   ├── Open → links to ./{page.file}
   └── ✕ Delete → confirm → snapshotForUndo() → deletePageFromSite(page)
 
-promptAddPage() / generatePage(description, navLabel, filename)
+promptAddPage() / generatePage(description, navLabel, filename, { model })
   ├── snapshotForUndo()
   ├── buildPagePrompt() — includes: style block, nav-specific CSS, nav HTML (verbatim),
   │     example section, container wrapper detection
-  ├── callGeminiAPI(prompt)  ← AI generates page; copies nav exactly (link added separately)
+  ├── callGeminiWithFallback(prompt, { model })  ← AI generates page; copies nav exactly (link added separately) — see §13a
   ├── writePageToLocalFile(filename, html)
   ├── Register in pagesInventory → savePagesInventory()
   ├── addLinkToNav(currentNav, navLabel, href)  ← programmatic nav update
@@ -539,13 +539,67 @@ Generates a new themed section and injects it at the chosen position.
 promptAddSection(insertAfterZone)
   └── Modal → on submit → snapshotForUndo() → generateSection(description, insertAfterZone)
 
-generateSection(description, insertAfterZone)
+generateSection(description, insertAfterZone, { model })
   ├── buildSectionPrompt() — sends: style block + example zone HTML
-  ├── callGeminiAPI(prompt)
+  ├── callGeminiWithFallback(prompt, { model }) — see §13a
   ├── parseSectionResponse() — <section-css> + <section-html>
   ├── Upsert <style id="__gitqi-section-{slug}-styles"> for CSS
   └── injectNewSection(section, insertAfterZone) → activateZone(section)
 ```
+
+### 13a. Gemini Model Fallback
+
+All four AI flows (Add Section, Reformat Section, Reformat Nav, Add Page)
+route through a single `callGeminiWithFallback(prompt, opts)` helper that
+automatically retries on a different model when the primary is overloaded
+or rate-limited. This was added because real users hit `gemini-2.5-flash`
+overload (HTTP 503) for extended periods and had no way to recover without
+refreshing / switching keys.
+
+**Model chain** (ordered, first is default):
+
+```
+GEMINI_MODELS = [
+  gemini-2.5-flash,      // default
+  gemini-2.5-pro,        // slower but often available when Flash is saturated
+  gemini-2.0-flash,
+  gemini-flash-latest,
+  gemini-2.5-flash-lite,
+]
+```
+
+Each Google AI Studio model has its own independent RPM/RPD quota, so
+falling back on 429 also works — different model, different bucket.
+
+**Retryable statuses** (`RETRYABLE_GEMINI_STATUS`): 429, 500, 503, 504.
+4xx auth / bad-request errors break the loop early — a different model
+won't fix a malformed request or revoked key.
+
+**Session stickiness** — `sessionPreferredModel` is set when a fallback
+succeeds, so subsequent calls start from the working model instead of
+re-hitting the known-busy primary every time. Reset on page reload.
+
+**UX:**
+- `callGeminiAPI(prompt, { model })` — low-level single-model call. Throws
+  `Error` augmented with `{ status, model, retryable }`.
+- `callGeminiWithFallback(prompt, { model, onFallback })` — walks the
+  chain. If `opts.model` is set, uses ONLY that model (no fallback) —
+  used when the user explicitly overrides from the error UI. Fires
+  `onFallback(model, priorError)` the first time it moves past the
+  primary so callers can surface a status message.
+- On total failure throws `Error` with `.tried = [{ model, status, message }]`
+  and a summary message distinguishing all-busy (503) vs. all-quota (429).
+
+**Shared error UI** — `makeAIErrorArea()` returns `{ el, getModel, render,
+renderSimple, reset }`. Each of the four AI dialogs appends its `el` to
+their existing error `<p>` on create; on error, `render(err)` shows the
+message plus a model `<select>` (Auto + each model id). The Submit
+handler passes `errorArea.getModel()` into the AI function so the user's
+choice is honored on retry. `renderSimple(text)` is used for non-AI
+errors (e.g. "page already exists") — hides the picker. `reset()` hides
+the block entirely when a retry begins.
+
+Version bump: fallback added in v1.3.0.
 
 ### 14. Serializer / Exporter
 

@@ -1,5 +1,5 @@
 /**
- * gitqi.js — v1.2.0
+ * gitqi.js — v1.3.0
  * Zero-dependency browser-based site editor.
  * Activates only when window.SITE_SECRETS is present (local edit mode).
  * Stripped from exported/published HTML automatically.
@@ -7,7 +7,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.2.0';
+  const VERSION = '1.3.0';
 
   if (!window.SITE_SECRETS) return;
 
@@ -1060,6 +1060,9 @@
     const submitBtn = modal.querySelector('#__gitqi-reformat-submit');
     const cancelBtn = modal.querySelector('#__gitqi-reformat-cancel');
 
+    const errorArea = makeAIErrorArea();
+    errorEl.appendChild(errorArea.el);
+
     textarea.focus();
     textarea.addEventListener('focus', () => {
       textarea.style.borderColor = T.secondary;
@@ -1085,6 +1088,7 @@
       const description = textarea.value.trim();
       if (!description) { textarea.style.borderColor = '#ef4444'; return; }
 
+      errorArea.reset();
       errorEl.style.display = 'none';
       submitBtn.disabled = true;
       submitBtn.textContent = 'Reformatting…';
@@ -1094,13 +1098,13 @@
 
       try {
         snapshotForUndo();
-        await reformatSection(section, description);
+        await reformatSection(section, description, { model: errorArea.getModel() });
         overlay.remove();
         showStatus('Section reformatted ✓');
       } catch (err) {
         sectionPending = false;
-        errorEl.textContent = 'Error: ' + err.message;
         errorEl.style.display = 'block';
+        errorArea.render(err);
         submitBtn.disabled = false;
         submitBtn.textContent = 'Try Again';
         cancelBtn.disabled = false;
@@ -1109,9 +1113,12 @@
     });
   }
 
-  async function reformatSection(section, description) {
+  async function reformatSection(section, description, opts = {}) {
     const prompt = buildReformatPrompt(section, description);
-    const responseText = await callGeminiAPI(prompt);
+    const responseText = await callGeminiWithFallback(prompt, {
+      model: opts.model,
+      onFallback: (model) => showStatus(`Using ${geminiModelLabel(model)} — primary model was busy`),
+    });
     const { css, html } = parseSectionResponse(responseText);
 
     if (!html) throw new Error('AI returned no valid HTML element.');
@@ -1323,6 +1330,9 @@ RULES:
     const submitBtn = overlay.querySelector('#__gitqi-reformat-nav-submit');
     const cancelBtn = overlay.querySelector('#__gitqi-reformat-nav-cancel');
 
+    const errorArea = makeAIErrorArea();
+    errorEl.appendChild(errorArea.el);
+
     setTimeout(() => textarea.focus(), 50);
 
     textarea.addEventListener('focus', () => {
@@ -1348,6 +1358,7 @@ RULES:
     submitBtn.addEventListener('click', async () => {
       const description = textarea.value.trim();
       if (!description) { textarea.focus(); return; }
+      errorArea.reset();
       errorEl.style.display = 'none';
       submitBtn.disabled = true;
       submitBtn.textContent = 'Reformatting…';
@@ -1356,13 +1367,13 @@ RULES:
       navPending = true;
       try {
         snapshotForUndo();
-        await reformatNav(nav, description);
+        await reformatNav(nav, description, { model: errorArea.getModel() });
         overlay.remove();
         showStatus('Nav reformatted ✓');
       } catch (err) {
         navPending = false;
-        errorEl.textContent = 'Error: ' + err.message;
         errorEl.style.display = 'block';
+        errorArea.render(err);
         submitBtn.disabled = false;
         submitBtn.textContent = 'Reformat with AI';
         cancelBtn.disabled = false;
@@ -1371,9 +1382,12 @@ RULES:
     });
   }
 
-  async function reformatNav(nav, description) {
+  async function reformatNav(nav, description, opts = {}) {
     const prompt = buildReformatNavPrompt(nav, description);
-    const responseText = await callGeminiAPI(prompt);
+    const responseText = await callGeminiWithFallback(prompt, {
+      model: opts.model,
+      onFallback: (model) => showStatus(`Using ${geminiModelLabel(model)} — primary model was busy`),
+    });
     const { css, html } = parseNavResponse(responseText);
 
     if (!html) throw new Error('AI did not return a valid <nav> element.');
@@ -1828,6 +1842,9 @@ RULES:
     const submitBtn  = modal.querySelector('#__gitqi-addpage-submit');
     const cancelBtn  = modal.querySelector('#__gitqi-addpage-cancel');
 
+    const errorArea = makeAIErrorArea();
+    errorEl.appendChild(errorArea.el);
+
     function labelToFilename(label) {
       return label.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') + '.html';
     }
@@ -1868,11 +1885,12 @@ RULES:
 
       const filename = labelToFilename(navLabel);
       if (pagesInventory.pages.find(p => p.file === filename)) {
-        errorEl.textContent = `A page named "${filename}" already exists.`;
         errorEl.style.display = 'block';
+        errorArea.renderSimple(`A page named "${filename}" already exists.`);
         return;
       }
 
+      errorArea.reset();
       errorEl.style.display = 'none';
       submitBtn.disabled   = true;
       submitBtn.textContent = 'Generating…';
@@ -1883,13 +1901,13 @@ RULES:
 
       try {
         snapshotForUndo();
-        await generatePage(description, navLabel, filename);
+        await generatePage(description, navLabel, filename, { model: errorArea.getModel() });
         overlay.remove();
         showStatus(`Page "${navLabel}" created ✓`);
       } catch (err) {
         pending = false;
-        errorEl.textContent = 'Error: ' + err.message;
         errorEl.style.display = 'block';
+        errorArea.render(err);
         submitBtn.disabled   = false;
         submitBtn.textContent = 'Try Again';
         cancelBtn.disabled   = false;
@@ -1899,9 +1917,12 @@ RULES:
     });
   }
 
-  async function generatePage(description, navLabel, filename) {
+  async function generatePage(description, navLabel, filename, opts = {}) {
     const prompt       = buildPagePrompt(description, navLabel, filename);
-    const responseText = await callGeminiAPI(prompt);
+    const responseText = await callGeminiWithFallback(prompt, {
+      model: opts.model,
+      onFallback: (model) => showStatus(`Using ${geminiModelLabel(model)} — primary model was busy`),
+    });
     const html         = parseHTMLFromResponse(responseText);
 
     if (!html || !html.toLowerCase().includes('<html')) throw new Error('AI returned invalid HTML.');
@@ -2742,6 +2763,9 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
     const submitBtn = modal.querySelector('#__gitqi-ai-submit');
     const cancelBtn = modal.querySelector('#__gitqi-ai-cancel');
 
+    const errorArea = makeAIErrorArea();
+    errorEl.appendChild(errorArea.el);
+
     textarea.focus();
     textarea.addEventListener('focus', () => {
       textarea.style.borderColor = T.accent2;
@@ -2770,6 +2794,7 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
         return;
       }
 
+      errorArea.reset();
       errorEl.style.display = 'none';
       submitBtn.disabled = true;
       submitBtn.textContent = 'Generating…';
@@ -2777,12 +2802,12 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
 
       try {
         snapshotForUndo();
-        await generateSection(description, insertAfterZone);
+        await generateSection(description, insertAfterZone, { model: errorArea.getModel() });
         overlay.remove();
         showStatus('Section added ✓');
       } catch (err) {
-        errorEl.textContent = 'Error: ' + err.message;
         errorEl.style.display = 'block';
+        errorArea.render(err);
         submitBtn.disabled = false;
         submitBtn.textContent = 'Try Again';
         cancelBtn.disabled = false;
@@ -2790,9 +2815,12 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
     });
   }
 
-  async function generateSection(description, insertAfterZone) {
+  async function generateSection(description, insertAfterZone, opts = {}) {
     const prompt = buildSectionPrompt(description);
-    const responseText = await callGeminiAPI(prompt);
+    const responseText = await callGeminiWithFallback(prompt, {
+      model: opts.model,
+      onFallback: (model) => showStatus(`Using ${geminiModelLabel(model)} — primary model was busy`),
+    });
     const { css, html } = parseSectionResponse(responseText);
 
     if (!html) throw new Error('AI returned no valid HTML element.');
@@ -2865,9 +2893,48 @@ RULES:
 </section-html>`;
   }
 
-  async function callGeminiAPI(prompt) {
+  // ─── Gemini models + fallback chain ──────────────────────────────────────
+  //
+  // Each Google AI Studio model has its own quota (RPM/RPD) and its own load
+  // pattern. When the primary model is overloaded (503) or rate-limited (429)
+  // we try the next model in the list. This keeps a busy default model from
+  // blocking the user's entire day of editing. Order matters — first entry is
+  // the default; later entries are progressively less preferred but still
+  // capable of our HTML-generation workload. Pro is slower but often available
+  // when Flash is saturated.
+  const GEMINI_MODELS = [
+    { id: 'gemini-2.5-flash',     label: 'Gemini 2.5 Flash' },
+    { id: 'gemini-2.5-pro',       label: 'Gemini 2.5 Pro' },
+    { id: 'gemini-2.0-flash',     label: 'Gemini 2.0 Flash' },
+    { id: 'gemini-flash-latest',  label: 'Gemini Flash (latest)' },
+    { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite' },
+  ];
+  const DEFAULT_GEMINI_MODEL = GEMINI_MODELS[0].id;
+
+  // HTTP statuses worth retrying on a different model:
+  //   429 = rate limit / quota (per-model quotas are independent)
+  //   500 = transient server error
+  //   503 = "model is busy" / overloaded (the most common failure)
+  //   504 = upstream timeout
+  // 4xx auth/bad-request errors are NOT retried — a different model won't help.
+  const RETRYABLE_GEMINI_STATUS = new Set([429, 500, 503, 504]);
+
+  // Sticky preference: once a fallback model succeeds, subsequent calls start
+  // with it so we don't waste a round-trip on the known-busy primary every
+  // time. Reset to null on each page load (not persisted).
+  let sessionPreferredModel = null;
+
+  function geminiModelLabel(id) {
+    const m = GEMINI_MODELS.find(m => m.id === id);
+    return m ? m.label : id;
+  }
+
+  // Low-level single-model call. Throws an Error augmented with { status,
+  // model, retryable } so the fallback layer can make routing decisions.
+  async function callGeminiAPI(prompt, opts = {}) {
+    const model = opts.model || DEFAULT_GEMINI_MODEL;
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${geminiKey}`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -2878,13 +2945,159 @@ RULES:
     );
 
     if (!res.ok) {
-      let errMsg = `Gemini API error ${res.status}`;
-      try { errMsg = (await res.json()).error?.message || errMsg; } catch (_) {}
-      throw new Error(errMsg);
+      let apiMsg = '';
+      try { apiMsg = (await res.json()).error?.message || ''; } catch (_) {}
+      const err = new Error(apiMsg || `Gemini API error ${res.status}`);
+      err.status = res.status;
+      err.model = model;
+      err.retryable = RETRYABLE_GEMINI_STATUS.has(res.status);
+      throw err;
     }
 
     const data = await res.json();
-    return data.candidates[0].content.parts[0].text;
+    // Defensive: some failure modes return 200 with no candidates (e.g. safety
+    // blocks). Surface that as a clear error rather than letting `.parts[0]`
+    // TypeError bubble up.
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (typeof text !== 'string') {
+      const err = new Error('Gemini returned an empty response (possibly blocked by safety filters).');
+      err.status = 0;
+      err.model = model;
+      err.retryable = false;
+      throw err;
+    }
+    return text;
+  }
+
+  // High-level call that walks the model chain on retryable failures.
+  //
+  //   opts.model  — if set, call ONLY that model (no fallback). Used when the
+  //                 user explicitly overrides from the error UI.
+  //   opts.onFallback(model, priorError) — optional notifier fired when we
+  //                 move past the primary to a fallback (for status messages).
+  //
+  // On total failure throws an Error with `.tried` = [{ model, status, message }].
+  async function callGeminiWithFallback(prompt, opts = {}) {
+    // Explicit override: one shot, no chain. User picked this model for a
+    // reason (probably because the auto chain just failed on them).
+    if (opts.model) {
+      try {
+        return await callGeminiAPI(prompt, { model: opts.model });
+      } catch (err) {
+        err.tried = [{ model: opts.model, status: err.status, message: err.message }];
+        throw err;
+      }
+    }
+
+    // Auto mode: start with session-sticky preference, then walk the rest.
+    const primary = sessionPreferredModel || DEFAULT_GEMINI_MODEL;
+    const chain = [primary, ...GEMINI_MODELS.map(m => m.id).filter(id => id !== primary)];
+
+    const tried = [];
+    let lastErr = null;
+    for (let i = 0; i < chain.length; i++) {
+      const model = chain[i];
+      try {
+        const result = await callGeminiAPI(prompt, { model });
+        if (i > 0) {
+          // A fallback worked. Stick with it for subsequent calls this session
+          // so the user doesn't re-wait on the known-busy primary every time.
+          sessionPreferredModel = model;
+          if (typeof opts.onFallback === 'function') {
+            try { opts.onFallback(model, lastErr); } catch (_) {}
+          }
+        }
+        return result;
+      } catch (err) {
+        tried.push({ model, status: err.status, message: err.message });
+        lastErr = err;
+        if (!err.retryable) break; // auth/bad-request — stop early
+      }
+    }
+
+    // Everything failed — build a single rich error for the UI.
+    const statuses = tried.map(t => t.status);
+    const allBusy  = tried.length > 0 && statuses.every(s => s === 503);
+    const allQuota = tried.length > 0 && statuses.every(s => s === 429);
+    const summary  = tried.map(t => `${geminiModelLabel(t.model)} (${t.status || 'error'})`).join(', ');
+
+    let msg;
+    if (allBusy)       msg = `All Gemini models are overloaded right now. Tried: ${summary}. Please wait a minute and try again.`;
+    else if (allQuota) msg = `All Gemini models have hit their daily quota. Tried: ${summary}. Check your Google AI Studio quota.`;
+    else if (tried.length > 1) msg = `${lastErr.message} — also tried: ${summary}.`;
+    else               msg = lastErr ? lastErr.message : 'Gemini request failed.';
+
+    const outErr = new Error(msg);
+    outErr.tried = tried;
+    outErr.status = lastErr && lastErr.status;
+    throw outErr;
+  }
+
+  // Shared UI helper for the four AI dialogs (add section, reformat section,
+  // reformat nav, add page). Returns { el, getModel, reset }:
+  //   el       — a container to drop into the dialog's error <p>/<div>; stays
+  //              hidden until render() is called with an error.
+  //   getModel — reads the current override choice. '' / null = auto (use
+  //              fallback chain); any GEMINI_MODELS.id = pin to that model.
+  //   render   — call with the caught error to show message + model dropdown.
+  //   reset    — hide the error block (call when retrying).
+  function makeAIErrorArea() {
+    const container = el('div');
+    container.style.display = 'none';
+
+    const msgEl = el('div');
+    msgEl.style.cssText = `font-size:12.5px;color:${T.danger};line-height:1.5;`;
+
+    const pickerRow = el('div');
+    pickerRow.style.cssText = `margin-top:8px;display:flex;align-items:center;gap:8px;
+                               font-size:12px;color:${T.textMuted};flex-wrap:wrap;`;
+
+    const pickerLabel = el('label');
+    pickerLabel.textContent = 'Retry with model:';
+    pickerLabel.style.fontWeight = '500';
+
+    const select = el('select');
+    select.style.cssText = `padding:5px 8px;border:1.5px solid ${T.border};border-radius:${T.radiusSm};
+                            font-size:12px;font-family:${T.fontBody};background:#fff;
+                            color:${T.primary};cursor:pointer;outline:none;`;
+    const autoOpt = el('option', { value: '' });
+    autoOpt.textContent = 'Auto (try all models)';
+    select.appendChild(autoOpt);
+    for (const m of GEMINI_MODELS) {
+      const opt = el('option', { value: m.id });
+      opt.textContent = m.label;
+      select.appendChild(opt);
+    }
+
+    const hint = el('div');
+    hint.style.cssText = `font-size:11px;color:${T.textMuted};margin-top:4px;width:100%;line-height:1.4;`;
+    hint.textContent = 'Auto tries all models in turn. Pick a specific model to force just that one.';
+
+    pickerRow.appendChild(pickerLabel);
+    pickerRow.appendChild(select);
+    pickerRow.appendChild(hint);
+
+    container.appendChild(msgEl);
+    container.appendChild(pickerRow);
+
+    return {
+      el: container,
+      getModel: () => select.value || null,
+      render: (err) => {
+        msgEl.textContent = 'Error: ' + (err && err.message ? err.message : 'Unknown error');
+        pickerRow.style.display = 'flex';
+        container.style.display = 'block';
+      },
+      // For non-AI errors (e.g. form validation) — no model picker shown.
+      renderSimple: (text) => {
+        msgEl.textContent = text;
+        pickerRow.style.display = 'none';
+        container.style.display = 'block';
+      },
+      reset: () => {
+        container.style.display = 'none';
+      },
+    };
   }
 
   function parseHTMLFromResponse(text) {
