@@ -2277,6 +2277,27 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
     const parent = img.parentElement;
     if (getComputedStyle(parent).position === 'static') parent.style.position = 'relative';
 
+    // White haze sized to the image (not the parent, which may be larger).
+    // Positioned at mouseenter-time so size stays correct as responsive layouts flow.
+    const haze = el('div', { 'data-editor-ui': '' });
+    css(haze, {
+      position: 'absolute',
+      background: 'rgba(255, 255, 255, 0.45)',
+      pointerEvents: 'none',
+      opacity: '0',
+      transition: 'opacity 0.2s',
+      zIndex: '9',
+      borderRadius: getComputedStyle(img).borderRadius || '0',
+    });
+    parent.appendChild(haze);
+    const positionHaze = () => {
+      haze.style.top = img.offsetTop + 'px';
+      haze.style.left = img.offsetLeft + 'px';
+      haze.style.width = img.offsetWidth + 'px';
+      haze.style.height = img.offsetHeight + 'px';
+    };
+    positionHaze();
+
     const hint = el('div', { 'data-editor-ui': '' });
     hint.textContent = 'Click to replace image';
     css(hint, {
@@ -2301,8 +2322,15 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
     });
     parent.appendChild(hint);
 
-    img.addEventListener('mouseenter', () => { hint.style.opacity = '1'; });
-    img.addEventListener('mouseleave', () => { hint.style.opacity = '0'; });
+    img.addEventListener('mouseenter', () => {
+      positionHaze();
+      hint.style.opacity = '1';
+      haze.style.opacity = '1';
+    });
+    img.addEventListener('mouseleave', () => {
+      hint.style.opacity = '0';
+      haze.style.opacity = '0';
+    });
 
     img.addEventListener('click', () => {
       const input = el('input');
@@ -2427,7 +2455,7 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
 
     overlay.addEventListener('mouseenter', () => {
       hint.style.opacity = '1';
-      overlay.style.background = 'rgba(26, 27, 58, 0.12)';
+      overlay.style.background = 'rgba(255, 255, 255, 0.45)';
     });
     overlay.addEventListener('mouseleave', () => {
       hint.style.opacity = '0';
@@ -2441,6 +2469,34 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
     });
 
     wrapper.appendChild(overlay);
+
+    // On file:// YouTube blocks playback and renders "Error 153". Show a
+    // persistent notice so the site owner understands this is expected
+    // locally and will resolve once the site is published over http(s).
+    if (location.protocol === 'file:') {
+      const notice = el('div', { 'data-editor-ui': '' });
+      notice.textContent = 'ⓘ Preview only — video plays once published';
+      css(notice, {
+        position: 'absolute',
+        bottom: '10px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        background: T.primary,
+        color: T.bg,
+        padding: '6px 12px',
+        borderRadius: T.radiusPill,
+        fontSize: '11px',
+        fontWeight: '500',
+        fontFamily: T.fontBody,
+        letterSpacing: '0.02em',
+        whiteSpace: 'nowrap',
+        pointerEvents: 'none',
+        zIndex: '11',
+        boxShadow: '0 6px 16px -6px rgba(26, 27, 58, 0.5)',
+        border: '1px solid white',
+      });
+      wrapper.appendChild(notice);
+    }
   }
 
   function openVideoPopover(wrapper) {

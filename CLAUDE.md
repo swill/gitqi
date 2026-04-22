@@ -275,9 +275,11 @@ Handles image replacement without leaving the browser.
    - **If folder is linked:** write file to local `assets/`; set `src` to `./assets/filename`
    - **If no folder access:** display via blob URL locally; store `./assets/filename` in `data-gitqi-src`; serializer resolves on publish/export
 
+On hover the editor paints a translucent white haze sized to the image's bounding box (not the parent, which may be larger) and shows the "Click to replace image" pill on top. The haze is re-measured at `mouseenter` time so it stays correct as responsive layouts flow.
+
 ```
 bindImageHandler(img)
-  └── Attach hover overlay + click → file picker → handleImageUpload()
+  └── Attach white-haze overlay + hint pill + click → file picker → handleImageUpload()
 
 handleImageUpload(file, imgEl)
   ├── Read as ArrayBuffer → base64Encode → github.uploadFile(`assets/${file.name}`)
@@ -338,7 +340,11 @@ events — you cannot attach hover or click listeners to the iframe itself.
 ```
 bindVideoHandler(wrapper)
   ├── wrapper.style.position = 'relative' (if static)
-  ├── Inject [data-editor-ui] overlay with hover hint + click handler
+  ├── Inject [data-editor-ui] overlay with white-haze hover tint + hint pill
+  ├── If location.protocol === 'file:': append persistent "Preview only — video
+  │     plays once published" pill (YouTube blocks playback on file:// origins
+  │     with Error 153; the notice reassures the owner the error is expected
+  │     and resolves on publish). Stripped by serializer via data-editor-ui.
   └── Overlay click → openVideoPopover(wrapper)
 
 openVideoPopover(wrapper)
