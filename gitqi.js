@@ -2863,20 +2863,18 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
       borderRadius: getComputedStyle(img).borderRadius || '0',
     });
     parent.appendChild(haze);
-    const positionHaze = () => {
+    const hint = el('div', { 'data-editor-ui': '' });
+    hint.textContent = 'Click to replace image';
+    const positionOverlay = () => {
       haze.style.top = img.offsetTop + 'px';
       haze.style.left = img.offsetLeft + 'px';
       haze.style.width = img.offsetWidth + 'px';
       haze.style.height = img.offsetHeight + 'px';
+      hint.style.top = (img.offsetTop + img.offsetHeight / 2) + 'px';
+      hint.style.left = (img.offsetLeft + img.offsetWidth / 2) + 'px';
     };
-    positionHaze();
-
-    const hint = el('div', { 'data-editor-ui': '' });
-    hint.textContent = 'Click to replace image';
     css(hint, {
       position: 'absolute',
-      top: '50%',
-      left: '50%',
       transform: 'translate(-50%, -50%)',
       background: T.primary,
       color: T.bg,
@@ -2894,9 +2892,10 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
       border:'1px solid white',
     });
     parent.appendChild(hint);
+    positionOverlay();
 
     img.addEventListener('mouseenter', () => {
-      positionHaze();
+      positionOverlay();
       hint.style.opacity = '1';
       haze.style.opacity = '1';
     });
