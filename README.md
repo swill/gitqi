@@ -165,6 +165,7 @@ GitHub shows a banner: _"Your site is live at https://your-username.github.io/yo
 - Site identity: favicon, page title, meta description, keywords (title/description/keywords are per-page; everything else is site-wide)
 - CSS variables, grouped as Colors / Typography / Spacing / Layout
 - Google Fonts: **Browse Google Fonts…** opens a modal covering the full catalog (~1,900 families), lazy-loaded as rows scroll in, with category filter, name search, and popularity / A–Z sort. Picking a font injects only the `<link>` for that family. Abandoned fonts are pruned from `<head>` on the next auto-save.
+- **🧹 Clean up unused assets** at the bottom of the panel: scans every page (HTML + inline CSS + inline scripts + the inventory) for any `assets/...` reference, lists the files in `assets/` (locally + on GitHub) that nothing points at, and lets you review + uncheck before anything is deleted. Image orphans get thumbnails so it's easy to spot the one you forgot you were going to use.
 
 **Undo / Redo** — toolbar **↩** / **↪** buttons, or `Ctrl+Z` / `Ctrl+Shift+Z`. Covers structural changes (AI actions, section/page deletes). Text edits use the browser's native undo.
 

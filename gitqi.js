@@ -4755,6 +4755,42 @@ RULES:
         throw new Error(msg);
       }
     },
+
+    // DELETE /contents/{path} requires the sha of the file being removed. 404
+    // means the file isn't on GitHub (already cleaned, or local-only) — treat
+    // as a no-op so cleanup is idempotent across partial failures.
+    async deleteFile(path, sha) {
+      const body = {
+        message: `Remove unused asset: ${path}`,
+        sha,
+        branch,
+      };
+      const res = await fetch(
+        `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(path)}`,
+        { method: 'DELETE', headers: this.headers(), body: JSON.stringify(body) }
+      );
+      if (res.status === 404) return false;
+      if (!res.ok) {
+        let msg = `GitHub delete error ${res.status}`;
+        try { msg = (await res.json()).message || msg; } catch (_) {}
+        throw new Error(msg);
+      }
+      return true;
+    },
+
+    // List a directory's contents. Returns array of { name, path, sha, type }.
+    // 404 → returns []. Used for asset enumeration; for deeper recursion the
+    // caller fans out additional listDirectory calls into sub-trees.
+    async listDirectory(path) {
+      const res = await fetch(
+        `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(path)}?ref=${branch}`,
+        { headers: this.headers() }
+      );
+      if (res.status === 404) return [];
+      if (!res.ok) throw new Error(`GitHub ${res.status}: could not list ${path}`);
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    },
   };
 
   async function publishSite() {
@@ -4824,6 +4860,430 @@ RULES:
     } finally {
       btns.forEach(b => { b.disabled = false; });
     }
+  }
+
+  // ─── Asset Cleanup ────────────────────────────────────────────────────────
+  //
+  // Find files under assets/ that no references on the site point to anymore.
+  // Reference scanning is intentionally over-eager (any "assets/…" substring
+  // counts) because a false-negative — failing to recognise a real reference —
+  // means a working image vanishes from the live site, whereas a false-positive
+  // just leaves an unused file on disk. The user gets a review modal listing
+  // every orphan before anything is deleted, so the worst case for over-eager
+  // scanning is "you must confirm a clean list" which is fine.
+  //
+  // We scan:
+  //   - The live DOM (serialized with local:true so data-gitqi-src placeholders
+  //     resolve to their published paths)
+  //   - Every other page file on disk
+  //   - The pages inventory JSON
+  // The match regex (ASSET_REF_RE) catches occurrences of "assets/<path>" in
+  // any context — HTML attributes, inline CSS url(), srcset, JSON strings,
+  // inline scripts — without needing to know which attribute/property it lives
+  // in. Anchored on the word boundary so it won't fire inside an unrelated
+  // identifier that happens to contain the substring.
+
+  // Match "assets/<file-or-subpath>" anywhere in a text blob. No `\b` anchor
+  // because the `assets/` prefix is specific enough that false-positives on
+  // unrelated substrings (`myassets/`, etc.) are not worth defending against —
+  // worst case the user sees an extra checkbox in the review modal. The char
+  // class is intentionally narrow so the capture stops cleanly at the end of
+  // an attribute value / CSS token / JSON string. Case-insensitive so an
+  // accidental "Assets/" in a hand-authored URL still gets matched against the
+  // canonical lowercase folder name.
+  const ASSET_REF_RE = /assets\/([^\s"'`)<>?#,]+)/gi;
+
+  // Normalize a captured asset path so it compares equal to the enumeration
+  // output regardless of how it was written in the source:
+  //   - strip query string / fragment
+  //   - URL-decode (so "My%20Photo.jpg" matches the on-disk file "My Photo.jpg")
+  //   - collapse leading "./" and "/" so paths share one shape
+  //   - drop trailing slashes / backslashes
+  // Returns an empty string for paths that should be ignored.
+  function normalizeAssetPath(raw) {
+    if (!raw) return '';
+    let p = raw.split('?')[0].split('#')[0];
+    try { p = decodeURIComponent(p); } catch (_) {}
+    p = p.replace(/^\.?\/+/, '');         // strip leading "./" or "/"
+    p = p.replace(/[\\/]+$/, '');         // strip trailing slashes
+    return p;
+  }
+
+  // Extract the asset-relative path (the part after "assets/") from any
+  // string that contains one. Returns "" if the string doesn't reference
+  // assets/ at all. Used by the DOM-walk path which already knows it has a
+  // single URL-shaped string rather than free-form text.
+  function extractAssetPathFromUrl(str) {
+    if (!str) return '';
+    const m = /assets\/(.+)$/i.exec(str);
+    if (!m) return '';
+    return normalizeAssetPath(m[1]);
+  }
+
+  // Pull every "assets/..." reference out of an arbitrary text blob and add
+  // the normalised paths to `out`. Used for raw text — disk-loaded HTML, JSON
+  // inventory, inline scripts, anything where we don't have a DOM to walk.
+  function harvestAssetRefsFromText(text, out) {
+    if (!text) return;
+    ASSET_REF_RE.lastIndex = 0;
+    let m;
+    while ((m = ASSET_REF_RE.exec(text)) !== null) {
+      const path = normalizeAssetPath(m[1]);
+      if (path) out.add(path);
+    }
+  }
+
+  // Belt-and-suspenders DOM walker: explicitly checks the URL-bearing
+  // attributes that are most likely to reference assets. Catches anything the
+  // text-regex might miss (different serialization, attribute-name quirks,
+  // etc.) and runs against any document — live or parsed-from-disk.
+  function harvestAssetRefsFromDoc(doc, out) {
+    // Each entry: [selector, attribute names to read]. srcset values are
+    // comma-separated lists of "url descriptor" pairs; we handle them via the
+    // text scan over the whole serialized doc below, but also split here so
+    // single-source srcset values are picked up cleanly.
+    const ATTRS = [
+      ['img',    ['src', 'data-gitqi-src', 'srcset']],
+      ['source', ['src', 'srcset']],
+      ['video',  ['src', 'poster']],
+      ['audio',  ['src']],
+      ['a',      ['href']],
+      ['link',   ['href']],
+      ['iframe', ['src']],
+      ['[style]',['style']], // inline style might carry url(./assets/…)
+    ];
+
+    for (const [selector, attrs] of ATTRS) {
+      doc.querySelectorAll(selector).forEach(el => {
+        for (const attr of attrs) {
+          const value = el.getAttribute(attr);
+          if (!value) continue;
+          if (attr === 'srcset') {
+            // srcset is a comma-separated list of "url descriptor" pairs.
+            value.split(',').forEach(part => {
+              const url = part.trim().split(/\s+/)[0];
+              const path = extractAssetPathFromUrl(url);
+              if (path) out.add(path);
+            });
+          } else if (attr === 'style') {
+            // Inline style: text-regex handles url() patterns.
+            harvestAssetRefsFromText(value, out);
+          } else {
+            const path = extractAssetPathFromUrl(value);
+            if (path) out.add(path);
+          }
+        }
+      });
+    }
+
+    // Style blocks: scan textContent for url() patterns.
+    doc.querySelectorAll('style').forEach(s => harvestAssetRefsFromText(s.textContent, out));
+  }
+
+  // Walk every page in the inventory (plus the inventory JSON itself) and
+  // every CSS / HTML surface in the live DOM, harvesting all assets/ refs.
+  async function collectAssetReferences() {
+    const refs = new Set();
+
+    // Current page: explicit DOM walk on the live document so attribute reads
+    // see exactly what the user has loaded right now (including any unsaved
+    // edits), plus a text-scan of the serialized output to catch references
+    // inside CSS / scripts / JSON-shaped data that aren't on an attribute.
+    harvestAssetRefsFromDoc(document, refs);
+    harvestAssetRefsFromText(serialize({ local: true }), refs);
+
+    // Other pages on disk: parse each so the DOM walker can do its job, AND
+    // do a text scan to catch anything attribute-walks miss. Inventory file
+    // is plain JSON — text scan only.
+    if (dirHandle && pagesInventory) {
+      for (const page of pagesInventory.pages) {
+        if (page.file === CURRENT_FILENAME) continue;
+        try {
+          const fh = await dirHandle.getFileHandle(page.file);
+          const file = await fh.getFile();
+          const text = await file.text();
+          harvestAssetRefsFromText(text, refs);
+          try {
+            const otherDoc = new DOMParser().parseFromString(text, 'text/html');
+            harvestAssetRefsFromDoc(otherDoc, refs);
+          } catch (_) {} // parse failure → text scan alone is still useful
+        } catch (_) {} // missing/unreadable page → skip, not fatal
+      }
+      try {
+        const invFh = await dirHandle.getFileHandle('gitqi-pages.json');
+        const invFile = await invFh.getFile();
+        harvestAssetRefsFromText(await invFile.text(), refs);
+      } catch (_) {}
+    }
+
+    return refs;
+  }
+
+  // Recursively enumerate every file under the local assets/ folder. Returns
+  // Map<assetPath, FileSystemFileHandle>, where assetPath is relative to
+  // assets/ (matching what the reference scanner produces).
+  async function enumerateLocalAssets() {
+    const out = new Map();
+    if (!dirHandle) return out;
+    let assetsDir;
+    try {
+      assetsDir = await dirHandle.getDirectoryHandle('assets');
+    } catch (_) {
+      return out; // assets/ doesn't exist yet — nothing to clean
+    }
+    async function walk(dir, prefix) {
+      for await (const [name, handle] of dir.entries()) {
+        if (handle.kind === 'file') {
+          out.set(prefix + name, handle);
+        } else if (handle.kind === 'directory') {
+          await walk(handle, prefix + name + '/');
+        }
+      }
+    }
+    await walk(assetsDir, '');
+    return out;
+  }
+
+  // Recursively enumerate every file under the remote assets/ folder via the
+  // Contents API. Returns Map<assetPath, sha>. Empty map if no GitHub access.
+  async function enumerateRemoteAssets() {
+    const out = new Map();
+    if (!hasGitHub) return out;
+    async function walk(path, prefix) {
+      const items = await github.listDirectory(path);
+      for (const item of items) {
+        if (item.type === 'file') {
+          out.set(prefix + item.name, item.sha);
+        } else if (item.type === 'dir') {
+          await walk(item.path, prefix + item.name + '/');
+        }
+      }
+    }
+    try { await walk('assets', ''); } catch (_) {}
+    return out;
+  }
+
+  function formatBytes(n) {
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  async function promptAssetCleanup() {
+    if (!dirHandle) {
+      showStatus('Link your site folder to clean up assets', true);
+      return;
+    }
+
+    const overlay = el('div', { 'data-editor-ui': '' });
+    css(overlay, {
+      position: 'fixed', inset: '0', background: 'rgba(26, 27, 58, 0.65)',
+      zIndex: '1000000', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontFamily: T.fontBody,
+    });
+    const modal = el('div');
+    css(modal, {
+      background: T.bg, borderRadius: T.radius, padding: '28px 30px',
+      width: '560px', maxWidth: '92vw', maxHeight: '82vh',
+      fontFamily: T.fontBody, boxShadow: T.shadow, position: 'relative',
+      overflow: 'hidden', borderTop: `5px solid ${T.accent2}`,
+      display: 'flex', flexDirection: 'column',
+    });
+
+    modal.innerHTML = `
+      <h3 style="margin:0 0 6px;font-size:22px;color:${T.primary};font-family:${T.fontHead};font-weight:600;letter-spacing:-0.02em;line-height:1.15">Clean up <span style="color:${T.accent2};font-style:italic">unused assets</span></h3>
+      <p id="__gitqi-cleanup-summary" style="margin:0 0 14px;font-size:13px;color:${T.textMuted};line-height:1.55">
+        Scanning your site for references…
+      </p>
+      <div id="__gitqi-cleanup-list" style="flex:1;overflow-y:auto;border:1px solid ${T.borderSoft};border-radius:${T.radiusSm};padding:6px 0;background:#fff;min-height:80px;"></div>
+      <p id="__gitqi-cleanup-error" style="display:none;margin:10px 0 0;font-size:12.5px;color:${T.danger};"></p>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;">
+        <button id="__gitqi-cleanup-cancel"
+          style="padding:9px 20px;border:1.5px solid ${T.border};background:transparent;border-radius:${T.radiusPill};
+                 cursor:pointer;font-size:13px;font-family:${T.fontBody};font-weight:500;color:${T.primary};
+                 transition:background 0.18s ease;">Cancel</button>
+        <button id="__gitqi-cleanup-confirm" disabled
+          style="padding:9px 22px;background:${T.accent4};color:#fff;border:2px solid transparent;
+                 border-radius:${T.radiusPill};cursor:pointer;font-size:13px;font-weight:600;
+                 font-family:${T.fontBody};letter-spacing:-0.005em;opacity:0.5;
+                 transition:background 0.18s ease, transform 0.18s ease, opacity 0.18s ease;">Delete selected</button>
+      </div>
+    `;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const summaryEl = modal.querySelector('#__gitqi-cleanup-summary');
+    const listEl    = modal.querySelector('#__gitqi-cleanup-list');
+    const errorEl   = modal.querySelector('#__gitqi-cleanup-error');
+    const confirmBtn = modal.querySelector('#__gitqi-cleanup-confirm');
+    const cancelBtn  = modal.querySelector('#__gitqi-cleanup-cancel');
+
+    cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = T.bgAlt; });
+    cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.background = 'transparent'; });
+
+    let pending = false;
+    cancelBtn.addEventListener('click', () => { if (!pending) overlay.remove(); });
+
+    try {
+      // Run scans in parallel so the modal renders the result quickly.
+      const [refs, local, remote] = await Promise.all([
+        collectAssetReferences(),
+        enumerateLocalAssets(),
+        enumerateRemoteAssets(),
+      ]);
+
+      // Union of all known paths (local + remote). An asset can exist in only
+      // one location (e.g. uploaded but never written locally, or vice versa)
+      // and we still want to surface it. Cleanup acts on whichever locations
+      // actually hold it.
+      const allPaths = new Set([
+        ...local.keys(),
+        ...remote.keys(),
+      ]);
+
+      const orphans = [];
+      let referencedCount = 0;
+      for (const path of allPaths) {
+        if (refs.has(path)) { referencedCount++; continue; }
+        orphans.push({
+          path,
+          localHandle: local.get(path) || null,
+          remoteSha:   remote.get(path) || null,
+        });
+      }
+
+      orphans.sort((a, b) => a.path.localeCompare(b.path));
+
+      const totalKnown = allPaths.size;
+      summaryEl.innerHTML = `
+        Found <strong style="color:${T.primary}">${totalKnown}</strong> asset${totalKnown === 1 ? '' : 's'} —
+        <strong style="color:${T.success}">${referencedCount}</strong> referenced,
+        <strong style="color:${T.accent4}">${orphans.length}</strong> unused.
+      `;
+
+      if (orphans.length === 0) {
+        listEl.innerHTML = `
+          <div style="padding:24px;text-align:center;color:${T.textMuted};font-size:13px;">
+            Everything is in use. Nothing to clean up.
+          </div>`;
+        confirmBtn.style.display = 'none';
+        cancelBtn.textContent = 'Close';
+        return;
+      }
+
+      // Render orphan rows. Each row gets a checkbox (default checked), the
+      // asset path, the file size (when readable from disk), and an indicator
+      // of which side it lives on. Image-like extensions also get a thumbnail.
+      const IMG_EXT = /\.(jpe?g|png|gif|webp|svg|avif|bmp|ico)$/i;
+      const rows = await Promise.all(orphans.map(async (orphan, i) => {
+        let size = '';
+        let thumbUrl = '';
+        if (orphan.localHandle) {
+          try {
+            const f = await orphan.localHandle.getFile();
+            size = formatBytes(f.size);
+            if (IMG_EXT.test(orphan.path)) {
+              thumbUrl = URL.createObjectURL(f);
+            }
+          } catch (_) {}
+        }
+        const whereLocal  = orphan.localHandle ? 'local' : '';
+        const whereRemote = orphan.remoteSha   ? 'github' : '';
+        const where = [whereLocal, whereRemote].filter(Boolean).join(' + ') || 'unknown';
+        return { ...orphan, size, thumbUrl, where, index: i };
+      }));
+
+      const rowsHTML = rows.map(r => `
+        <label data-cleanup-row="${r.index}" style="display:flex;align-items:center;gap:12px;padding:10px 14px;cursor:pointer;border-bottom:1px solid ${T.borderSoft};">
+          <input type="checkbox" checked data-cleanup-checkbox="${r.index}"
+            style="width:14px;height:14px;cursor:pointer;accent-color:${T.accent4};margin:0;flex-shrink:0;" />
+          ${r.thumbUrl
+            ? `<img src="${r.thumbUrl}" style="width:64px;height:64px;object-fit:cover;border-radius:6px;border:1px solid ${T.borderSoft};flex-shrink:0;background:${T.bgAlt};" />`
+            : `<div style="width:64px;height:64px;border-radius:6px;background:${T.bgAlt};border:1px solid ${T.borderSoft};flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:22px;color:${T.textMuted};">📄</div>`}
+          <div style="flex:1;min-width:0;">
+            <div style="font-family:${T.fontMono};font-size:12px;color:${T.primary};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml('assets/' + r.path)}</div>
+            <div style="font-size:11px;color:${T.textMuted};margin-top:3px;">${r.size}${r.size ? ' · ' : ''}${r.where}</div>
+          </div>
+        </label>
+      `).join('');
+      listEl.innerHTML = rowsHTML;
+
+      confirmBtn.disabled = false;
+      confirmBtn.style.opacity = '1';
+      confirmBtn.addEventListener('mouseenter', () => { confirmBtn.style.transform = 'translateY(-2px)'; });
+      confirmBtn.addEventListener('mouseleave', () => { confirmBtn.style.transform = 'translateY(0)'; });
+
+      const updateConfirmLabel = () => {
+        const n = listEl.querySelectorAll('input[data-cleanup-checkbox]:checked').length;
+        confirmBtn.textContent = n === 0
+          ? 'Delete selected'
+          : `Delete ${n} file${n === 1 ? '' : 's'}`;
+        confirmBtn.disabled = (n === 0);
+        confirmBtn.style.opacity = (n === 0) ? '0.5' : '1';
+      };
+      updateConfirmLabel();
+      listEl.addEventListener('change', updateConfirmLabel);
+
+      confirmBtn.addEventListener('click', async () => {
+        const selectedIndexes = Array.from(listEl.querySelectorAll('input[data-cleanup-checkbox]:checked'))
+          .map(cb => parseInt(cb.dataset.cleanupCheckbox, 10));
+        if (!selectedIndexes.length) return;
+
+        pending = true;
+        confirmBtn.disabled = true;
+        cancelBtn.disabled = true;
+        errorEl.style.display = 'none';
+        confirmBtn.textContent = 'Deleting…';
+
+        const selected = selectedIndexes.map(i => rows[i]);
+        const result = await runAssetCleanup(selected);
+
+        // Free the thumbnail blob URLs we created.
+        rows.forEach(r => { if (r.thumbUrl) try { URL.revokeObjectURL(r.thumbUrl); } catch (_) {} });
+
+        overlay.remove();
+        if (result.failed.length) {
+          showStatus(`Cleaned ${result.deleted} file${result.deleted === 1 ? '' : 's'}; ${result.failed.length} failed: ${result.failed.slice(0, 3).join(', ')}${result.failed.length > 3 ? '…' : ''}`, true);
+        } else {
+          showStatus(`Cleaned up ${result.deleted} unused file${result.deleted === 1 ? '' : 's'} ✓`);
+        }
+      });
+    } catch (err) {
+      errorEl.style.display = 'block';
+      errorEl.textContent = 'Scan failed: ' + (err.message || err);
+      summaryEl.textContent = '';
+    }
+  }
+
+  // Delete the given orphan entries from disk and (if available) GitHub.
+  // Returns { deleted, failed: [path, ...] }. Continues past per-file errors
+  // so a single GitHub 5xx doesn't abandon the rest of the cleanup.
+  async function runAssetCleanup(orphans) {
+    let deleted = 0;
+    const failed = [];
+    for (const orphan of orphans) {
+      let okLocal = true, okRemote = true;
+      if (orphan.localHandle) {
+        try {
+          // removeEntry on the parent dir takes the leaf name; for nested
+          // paths we walk down the dirHandle tree.
+          const segments = orphan.path.split('/');
+          let dir = await dirHandle.getDirectoryHandle('assets');
+          for (let i = 0; i < segments.length - 1; i++) {
+            dir = await dir.getDirectoryHandle(segments[i]);
+          }
+          await dir.removeEntry(segments[segments.length - 1]);
+        } catch (_) { okLocal = false; }
+      }
+      if (orphan.remoteSha && hasGitHub) {
+        try {
+          await github.deleteFile('assets/' + orphan.path, orphan.remoteSha);
+        } catch (_) { okRemote = false; }
+      }
+      if (okLocal && okRemote) deleted++;
+      else failed.push(orphan.path);
+    }
+    return { deleted, failed };
   }
 
   // ─── Favicon Helpers ──────────────────────────────────────────────────────
@@ -6080,6 +6540,49 @@ RULES:
 
       content.appendChild(section);
     }
+
+    // Maintenance section — currently just the unused-asset cleanup. Stays at
+    // the very bottom of the panel since it's a one-off house-keeping action,
+    // not part of routine theme editing.
+    const maintSection = el('div');
+    css(maintSection, { padding: '14px 18px 22px', borderTop: `1px solid ${T.borderSoft}`, marginTop: '6px' });
+
+    const maintLabel = el('div');
+    maintLabel.textContent = 'Maintenance';
+    css(maintLabel, { fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.1em', color: T.textMuted, marginBottom: '8px' });
+
+    const cleanupBtn = el('button');
+    cleanupBtn.textContent = '🧹 Clean up unused assets';
+    css(cleanupBtn, {
+      width: '100%',
+      padding: '9px 12px',
+      background: dirHandle ? T.bgAlt : T.bgAlt,
+      color: dirHandle ? T.primary : T.textMuted,
+      border: `1.5px solid ${T.borderSoft}`,
+      borderRadius: T.radiusPill,
+      cursor: dirHandle ? 'pointer' : 'not-allowed',
+      fontSize: '12.5px',
+      fontFamily: T.fontBody,
+      fontWeight: '500',
+      letterSpacing: '-0.005em',
+      transition: 'background 0.18s ease, border-color 0.18s ease',
+    });
+    cleanupBtn.title = dirHandle
+      ? 'Find and delete files in assets/ that nothing on the site references'
+      : 'Link your site folder first';
+    cleanupBtn.disabled = !dirHandle;
+    if (dirHandle) {
+      cleanupBtn.addEventListener('mouseenter', () => { cleanupBtn.style.background = T.accent3; cleanupBtn.style.borderColor = 'transparent'; });
+      cleanupBtn.addEventListener('mouseleave', () => { cleanupBtn.style.background = T.bgAlt; cleanupBtn.style.borderColor = T.borderSoft; });
+      cleanupBtn.addEventListener('click', () => { panel.remove(); promptAssetCleanup(); });
+    }
+
+    const maintHint = el('div');
+    maintHint.textContent = 'Shows a preview before anything is deleted.';
+    css(maintHint, { fontSize: '11px', color: T.textMuted, marginTop: '6px', lineHeight: '1.45' });
+
+    maintSection.append(maintLabel, cleanupBtn, maintHint);
+    content.appendChild(maintSection);
 
     panel.append(header, content);
     document.body.appendChild(panel);

@@ -402,6 +402,24 @@ Toggled by the **Theme** toolbar button, mutually exclusive with the Pages panel
 - **Site Identity** — favicon (PNG-converted, uploaded + written locally + favicon links upserted), page title, meta description, keywords. Title/description/keywords are page-specific (not synced); favicon syncs.
 - **CSS Variables** — grouped Colors / Typography / Spacing / Layout. Live preview via `documentElement.style.setProperty()` plus patching the main `<style>` textContent (which then propagates to every page on the next sync).
 - Color vars get a color picker + hex input. Font-family vars get a text input plus the **Aa** Google Fonts picker (`makeGoogleFontPicker`). The Typography group has an inline "Add font variable" form whose font picker fills the value only — the var name describes the role (e.g. `--font-display`), not the family — and the `<link>` is injected on Add, not on preview.
+- **Maintenance → 🧹 Clean up unused assets** at the bottom of the panel routes to `promptAssetCleanup()` (see §17a). Disabled when no folder is linked.
+
+### 17a. Asset Cleanup
+
+Find files under `assets/` that nothing on the site references anymore, with a preview-and-confirm flow before any deletion.
+
+- `collectAssetReferences()` — belt-and-suspenders scanner combining two strategies on every source we look at:
+  - **DOM walk** (`harvestAssetRefsFromDoc`) — explicitly reads URL-bearing attributes on `img` (`src` / `srcset` / `data-gitqi-src`), `source`, `video`, `audio`, `a`, `link`, `iframe`, every `[style]` attribute, and every `<style>` block. This is the primary path because attribute values are guaranteed-clean strings; we don't have to trust whatever the serializer produces or worry about regex edge cases.
+  - **Text regex** (`ASSET_REF_RE = /assets\/([^\s"'\`)<>?#,]+)/gi`) — catches anything outside an obvious attribute (CSS `url()`, inline scripts, JSON in the inventory, hand-authored strings). Case-insensitive; deliberately drops the `\b` anchor because the `assets/` prefix is specific enough on its own.
+
+  Each path runs through `normalizeAssetPath`: strips `?query` / `#fragment`, URL-decodes (so `My%20Photo.jpg` matches the on-disk `My Photo.jpg` — the original bug that motivated this design), and normalizes leading `./` and trailing slashes. Sources scanned: live `document`, `serialize({ local: true })` of the current page, every other inventory page parsed via `DOMParser` (DOM walk + text scan), and `gitqi-pages.json` (text scan).
+
+  False-negatives break the live site; false-positives just put an extra checkbox in the review modal. The scanner errs heavily toward false-positives.
+- `enumerateLocalAssets()` — recursive walk of `dirHandle.getDirectoryHandle('assets')`. Returns `Map<assetPath, FileSystemFileHandle>`, paths relative to `assets/`.
+- `enumerateRemoteAssets()` — recursive walk via `github.listDirectory('assets')`. Returns `Map<assetPath, sha>`. Empty map when `!hasGitHub`.
+- `promptAssetCleanup()` — runs all three in parallel, computes orphans = union(local, remote) minus refs. Modal lists each orphan with a checkbox (default checked), filename, size, image thumbnail when applicable, and a "local + github" / "local" / "github" badge. Confirm runs `runAssetCleanup(selected)` which deletes locally via `dirHandle.removeEntry` (walking nested directories) and remotely via `github.deleteFile` (DELETE `/contents/{path}` requires the file's sha — we already have it from enumeration). Per-file failures don't abandon the rest; surfaced in a final status message.
+
+The new `github.deleteFile(path, sha)` and `github.listDirectory(path)` helpers live alongside `putFile` / `uploadFile`. 404 from either is treated as a no-op so cleanup stays idempotent across partial failures.
 
 ### 18. Google Fonts
 
