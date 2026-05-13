@@ -19,7 +19,10 @@ Most website tools rent you an experience. GitQi gives you back the page.
 
 GitQi has two modes:
 
-- **Edit mode** — activated when `secrets.js` is present beside your HTML. The toolbar, editable zones, link popover, and AI tools all light up.
+- **Edit mode** — `gitqi.js` is loaded into the page and the editor activates automatically. Capabilities scale with what's in `secrets.js`:
+  - With GitHub credentials → one-click **Publish** + image uploads.
+  - With a Gemini key → AI features (Reformat Section, Reformat Nav, Add Section, Add Page).
+  - With neither → in-place edits, native nav controls (`+` / `←` `→`), Duplicate Page, ⟲ Sync, Theme, Export. Useful for using GitQi as a standalone local HTML editor, or for editing a site whose owner doesn't want to share their credentials.
 - **Public mode** — the deployed site. `gitqi.js` and `secrets.js` are stripped from the published HTML automatically. Visitors see static HTML; no editor code, no credentials, no runtime overhead.
 
 ---
@@ -103,9 +106,12 @@ Edit anything:
 - Click any text and type
 - Select text for the formatting toolbar (bold, italic, color, font, size, code, link)
 - Click any image or video to replace it
-- Hover sections for **⟳ Reformat**, **✕ Delete**, or **+ Add Section** between them
+- Hover sections for **⧉ Duplicate**, **⟳ Reformat**, **✕ Delete**, **↑ ↓** move; **+ Add Section** appears between sections
+- Hover nav links for **← →** reorder; a **+** appears at the end of each style cluster (main links and CTAs get their own + so a new main-style link doesn't inherit CTA button styling)
+- Click **⟲** to force-sync nav + footer + theme to every other page (useful after hand-editing HTML)
 - Click **Theme** in the toolbar for colors, fonts, spacing, favicon, page title, meta description
-- Click **Pages** (multi-page only) to add AI-generated pages or navigate between them
+- Click **Pages** to navigate between pages, **⧉ Duplicate** a page (no AI — copy + rename), or generate a new AI page
+- Click **?** for keyboard shortcuts and a feature reference
 
 When you're ready, click **Publish** in the toolbar. GitQi strips all editor code + `secrets.js`, serializes the clean HTML, and pushes it to GitHub via the Contents API. That first publish also creates the `main` branch — which is what Step 7 needs.
 
@@ -144,9 +150,13 @@ GitHub shows a banner: _"Your site is live at https://your-username.github.io/yo
 - Left side of the section: **↑ / ↓** arrows — move the section up or down the page (bounded between nav and footer).
 - Footer sections are pinned: Duplicate and the move arrows are suppressed for whatever element matches `<footer>` (or `[data-zone="footer"]`).
 
-**Navigation** — hover the nav → **⟳ Reformat Nav** (AI restructure). Changes sync to every other page automatically.
+**Navigation** —
+- Hover any nav link for **← →** reorder controls. To remove a link, click it → **Remove link** in the popover (which drops the wrapping `<li>` so you don't end up chasing an empty list item).
+- Hover the end of each style cluster for a **+** add button. Click it to clone the cluster's style; the link popover opens automatically on the new anchor so you can type a label + URL or pick a page. A nav with main links + a CTA gets two **+** buttons (one per cluster) so new main-style links and new CTA-style links each come out looking right.
+- **⟳ Reformat Nav** (AI restructure) is still in the top-right of the nav when Gemini is configured.
+- Any nav change syncs to every other page automatically; use **⟲** in the toolbar to force-sync without an extra edit.
 
-**Pages** _(multi-page sites)_ — click **Pages** in the toolbar. Navigate between pages, generate a new AI page, or delete a page. New page links are added to the nav and propagated to every page.
+**Pages** _(multi-page sites)_ — click **Pages** in the toolbar. Navigate between pages, **⧉ Duplicate** a page (copies the file on disk, picks a new filename, adds a nav link — no AI required), generate a new AI page (when Gemini is configured), or delete a page. New page links are added to the nav and propagated to every page.
 
 **AI model fallback** — all four AI actions (Add Section, Reformat, Reformat Nav, Add Page) route through a fallback chain of Gemini models. If the primary is overloaded or rate-limited, GitQi automatically retries on the next one and shows a status like _"Using Gemini 2.5 Pro — primary model was busy"_. On total failure the error dialog offers a **Retry with model** dropdown so you can force a specific model.
 
@@ -282,7 +292,7 @@ You have the key. Now the Qi: how GitQi actually works, how to pin or self-host 
 
 ### How it works
 
-GitQi is a single JavaScript file that activates only when `window.SITE_SECRETS` is set (i.e. when `secrets.js` has loaded). In public mode the script tag is stripped entirely, so there's nothing to load and nothing to run.
+GitQi is a single JavaScript file that activates as soon as the page loads. `window.SITE_SECRETS` is read defensively (`|| {}`); each capability is gated on whether the relevant fields are present, so the editor degrades gracefully rather than refusing to start. In public mode the script tag is stripped entirely, so there's nothing to load and nothing to run.
 
 The publish pipeline is:
 

@@ -5,8 +5,13 @@
 A zero-dependency, browser-based inline editing system for static websites. The site owner opens their HTML files locally, edits content in-place, and publishes directly to GitHub Pages — no terminal, no CMS, no backend.
 
 The system has two distinct modes:
-- **Edit mode** — activated when `secrets.js` is present alongside the HTML files
+- **Edit mode** — `gitqi.js` is included in the HTML and the editor activates as soon as the page loads. Features degrade per-capability based on what's in `secrets.js`:
+  - `githubToken` + `repo` present → **Publish** button + GitHub image uploads
+  - `geminiKey` present → AI features (Reformat Section, Reformat Nav, Add Section, Add Page)
+  - both absent ("offline mode") → in-place edits, native nav controls (+ / ← →), Duplicate Page, ⟲ Sync, Theme, Export. Folder access via the File System Access API is still required regardless.
 - **Public mode** — the deployed site with no editor code, no credentials, no overhead
+
+There is **no query parameter or feature flag** for offline mode. Presence of each secret is the only signal; the editor sets `hasGitHub` and `hasGemini` flags once at load and the rest of the code branches on those.
 
 ---
 
@@ -45,7 +50,9 @@ GitHub Pages is configured to serve from the root of the `main` branch ("Deploy 
 
 Single self-invoking IIFE, hosted externally on GitHub Pages. Included in each HTML page only during local editing — stripped from the published output.
 
-### Required Globals (set by `secrets.js`)
+### Optional Globals (set by `secrets.js`)
+
+All fields are optional — `secrets.js` may itself be absent. The editor still loads; features gate on what's available.
 
 ```js
 window.SITE_SECRETS = {
@@ -54,6 +61,13 @@ window.SITE_SECRETS = {
   repo:        "user/repo", // e.g. "jane/jane-osteopathy"
   branch:      "main"       // Deployment branch
 };
+```
+
+`gitqi.js` reads `window.SITE_SECRETS || {}` and computes two capability flags consumed throughout the file:
+
+```js
+const hasGitHub = !!(githubToken && repo);  // gates Publish button + image uploads + favicon upload
+const hasGemini = !!geminiKey;              // gates all four AI flows + their entry-point buttons
 ```
 
 ### Initialization
@@ -108,9 +122,16 @@ Identifies and activates editable regions.
 
 Fixed-position bar prepended to the page in edit mode. Marked `data-editor-ui` so it's stripped on export/publish.
 
-Left → right: site title with `●` dirty indicator, status message area, **↩ Undo**, **↪ Redo**, **Pages**, **Theme**, **Export** (download clean HTML for the current page), **Publish** (commit all pages + `gitqi-pages.json` to GitHub).
+Left → right: site title with `●` dirty indicator, status message area, **↩ Undo**, **↪ Redo**, **⟲ Sync**, **Pages**, **Theme**, **Export**, **Publish** (rightmost), **?** (help, far right).
+
+- **⟲ Sync** — manual trigger for `syncSharedToOtherPagesIfChanged()`. Resets `lastSyncedSharedSnapshot` first so it always runs, then surfaces a status like "Synced shared elements to N other page(s) ✓". Use case: hand-editing nav/footer HTML on disk and wanting to force-propagate without making a trivial dirty edit just to trigger auto-save.
+- **Export** — `serialize({ local: false })` + download. Becomes the visual CTA (styled primary) when Publish is hidden in offline mode.
+- **Publish** — only present when `hasGitHub`. Commits all pages + `gitqi-pages.json` to GitHub.
+- **?** — always present. Opens the Help side panel: keyboard shortcuts, capability summary, and a "Currently unavailable" block listing missing features and how to enable them (links to AI Studio for Gemini, fine-grained-PAT instructions for GitHub). Each missing capability has its own `note:` line: Gemini-missing mentions native nav controls + duplicate-as-template; GitHub-missing mentions Export + local `assets/`.
 
 `injectToolbar()` shifts `body { padding-top }` and any fixed `<nav>`'s `top` down by 44px to make room. `setDirty(bool)` toggles the indicator and schedules a debounced auto-save (1500ms).
+
+**Auto-save sync messaging** — `saveChanges()` reads the result object from `syncSharedToOtherPagesIfChanged()` (`{ skipped, syncedCount, failedFiles }`) and surfaces "Synced shared elements to N other page(s) ✓" whenever it actually propagates anything. Silent when there was nothing to sync. The same function is called by the manual ⟲ button which always emits a status.
 
 ### 3. File Persistence
 
@@ -133,7 +154,9 @@ Auto-created on first use. `loadPagesInventory()` reads it (seeding from the cur
 
 ### 5. Shared Head + Nav Sync
 
-On every auto-save, compares a JSON snapshot of the current page's shared head + nav against the last-synced snapshot. If anything changed, the updated elements are written into every other page file on disk. Triggered immediately (not via the auto-save timer) after Reformat Nav, Add Page, and Delete Page (those callers reset `lastSyncedSharedSnapshot = ''` and call the sync directly).
+On every auto-save, compares a JSON snapshot of the current page's shared head + nav against the last-synced snapshot. If anything changed, the updated elements are written into every other page file on disk. Triggered immediately (not via the auto-save timer) after Reformat Nav, Add Page, **Duplicate Page**, Delete Page, **native nav add/move/remove link, and link-popover Remove link in a nav** (all reset `lastSyncedSharedSnapshot = ''` and call the sync directly — or rely on the next auto-save to pick the change up). The toolbar **⟲ Sync** button does the same: reset snapshot, call sync, always emit a status.
+
+`syncSharedToOtherPagesIfChanged()` returns `{ skipped, reason }` or `{ skipped: false, syncedCount, failedFiles }`. `saveChanges()` reads this and surfaces "Synced shared elements to N other page(s) ✓" when `syncedCount > 0`, staying silent otherwise. `manualSync()` always emits a status — either the success count, "Nothing to sync — only one page", or a failure summary.
 
 **Synced** (page-to-page, whole-site):
 - `<nav>`
@@ -157,9 +180,12 @@ Subtree observer on `<body>` for `characterData` + `childList`. Mutations origin
 `bindImageHandler(img)` paints a translucent white haze sized to the image's bounding box (re-measured on `mouseenter` so it stays correct as responsive layouts flow) plus a "Click to replace image" hint pill. Clicking opens a hidden file input.
 
 `handleImageUpload(file, imgEl)`:
-- Read as ArrayBuffer → base64 → `github.uploadFile('assets/' + file.name)`
-- If `dirHandle`: also `writeImageToLocalDir(file)`; set `imgEl.src = './assets/' + file.name`
-- If no folder access: display via `URL.createObjectURL(file)`; store `'./assets/' + file.name` in `data-gitqi-src` for the serializer to resolve at publish time
+- Read as ArrayBuffer
+- If `hasGitHub`: base64 + `github.uploadFile('assets/' + file.name)`. In offline mode the GitHub call is skipped entirely; status reads "Saving image..." → "Image saved ✓" instead of "Uploading..." / "Image uploaded ✓".
+- If `dirHandle`: `writeImageToLocalDir(file)`; set `imgEl.src = './assets/' + file.name`
+- If no folder access: display via `URL.createObjectURL(file)`; store `'./assets/' + file.name` in `data-gitqi-src` for the serializer to resolve at publish/export time
+
+The favicon upload path in the Theme editor follows the same `hasGitHub` gating.
 
 ### 7a. Video Manager
 
@@ -208,11 +234,16 @@ Intercepts clicks on `<a>` elements inside `[data-zone]` or `<nav>` in the captu
 - **Subject** + **Body** (mailto only) — collapsible block that appears whenever the URL starts with `mailto:`. `parseMailto(url)` reads existing `?subject=` / `?body=` into the inputs on open; editing either input rebuilds the URL via `buildMailto({address, subject, body})`. A `suppressUrlSync` flag breaks the URL→inputs→URL feedback loop.
 - **Page/section picker** — dropdown grouped by page. Current page's zones from the DOM; other pages' zones loaded async from disk via `dirHandle`.
 - **Open in new tab** — toggles `target="_blank"` + `rel="noopener noreferrer"`. Auto-checks for external `https?://` URLs unless the user has explicitly toggled it in the same session.
-- **Remove link** — unwraps `<a>`, leaving plain text.
+- **Remove link** — context-aware, always undoable (`snapshotForUndo()` before any mutation):
+  - In a `<nav>`: drop the wrapping `<li>` (or the `<a>` itself for flat navs) and reset `lastSyncedSharedSnapshot` so the change propagates. If the removed link pointed at `CURRENT_FILENAME`, surface a warning status. This is the canonical way to remove a nav link — the native per-item hover controls deliberately don't include a ✕ to avoid misclick deletions.
+  - Inside a `[contenteditable="true"]` host (i.e. inline body link in a `[data-editable]` zone): unwrap `<a>` to a text node so the surrounding sentence keeps flowing. Text remains selectable + re-linkable via the selection toolbar's 🔗 button.
+  - Outside any editable host (typically a styled CTA button living in a structural wrapper that itself isn't editable): remove the whole `<a>` element. Leaving an un-editable, un-re-linkable text node behind would have been worse than no element at all.
 
 **Positioning** (`positionPopover` and `reclampPopoverAfterResize`) — measures the actual rendered popover size (the old guess-then-flip approach mis-flipped tall popovers when the guess was wrong), prefers the side with more room, and re-clamps when the popover resizes (e.g. mailto fields appearing/disappearing) without yanking it to a new anchor.
 
 ### 10. Section Reformat
+
+Gated on `hasGemini`. `activateZone` only injects the **⟳ Reformat** per-section button when Gemini is configured.
 
 `promptReformatSection(section)` — modal → on submit → `snapshotForUndo()` → `reformatSection()`:
 
@@ -223,14 +254,23 @@ Intercepts clicks on `<a>` elements inside `[data-zone]` or `<nav>` in the captu
 
 ### 11. Nav Editor
 
-`activateNav()` injects the **⟳ Reformat Nav** hover button and marks the nav with `data-gitqi-nav-bound`.
+`activateNav()` marks the nav with `data-gitqi-nav-bound` and always calls `injectNavControls(nav)`. When `hasGemini` it ALSO injects the **⟳ Reformat Nav** hover button (top-right corner of the nav). Without Gemini, native controls are the only way to edit the nav.
 
-`reformatNav(nav, description, { model })`:
+**Native nav controls (`injectNavControls`)** — always present regardless of AI availability:
+
+- **(+) per cluster** — items within each `<ul>`/`<ol>` are clustered by a class signature that combines the wrapper's classes *and* the inner anchor's classes (the latter is where CTA styling almost always lives — e.g. `<li><a class="btn btn-primary">`). Each contiguous run of same-signature items is a cluster and gets its own hover-revealed (+) button placed right after the cluster. Click clones the cluster's last currently-present item, opens the link popover on the new anchor for label + URL editing. The same clustering applies to flat-anchor navs (bare `<a>` children of `<nav>` other than logo links).
+- **← → reorder** — per-item hover-revealed arrows that swap with the previous/next non-editor-UI sibling. Arrows match horizontal-nav reading order; the underlying operation works for vertical navs too. No ✕ button on items — removal goes through the link popover (avoids destructive misclicks on a hover control).
+- **Idempotent re-bind** — `injectNavControls` is called on every `activateNav` (including after Reformat Nav, add/duplicate page, restoreSnapshot). To stay idempotent, it strips all `[data-gitqi-nav-add]` placeholders and clears `[data-gitqi-nav-item-bound]` markers (along with the editor-UI control children inside those items) at the top of every run, then re-binds from scratch. Without this, placeholders accumulate after each rebind.
+- **State markers**: `data-gitqi-nav-item-bound="1"` on real items, `data-gitqi-nav-add="1"` on (+) placeholders (also `data-editor-ui` so they're stripped on serialize). The serializer, `getNavHTML`, and `captureSnapshot` all strip `data-gitqi-nav-item-bound`.
+
+`reformatNav(nav, description, { model })` — AI-driven, gated on `hasGemini`:
 - `buildReformatNavPrompt()` sends: style block, nav-specific CSS, nav HTML
 - `parseNavResponse()` expects `<nav-html>…</nav-html>` and optionally `<nav-css>…</nav-css>` (AI omits the CSS for content-only changes like adding/removing a link)
 - Replace the nav, `rerunInlineScripts(newNav)` to rebind hamburger toggles, `activateNav()`, then force-sync (`lastSyncedSharedSnapshot = ''` → `syncSharedToOtherPagesIfChanged()`)
 
-`addLinkToNav(navEl, label, href)` — programmatic link insertion (used by the page generator). Strategy 1: find every `<ul>`/`<ol>` containing `<li><a>`, clone the last item per list, update text/href, append. Strategy 2 (fallback): bare `<a>` elements, clone the last and insert after.
+`addLinkToNav(navEl, label, href)` — programmatic link insertion (used by `generatePage` and `duplicatePage`). Picks the *largest* `<ul>`/`<ol>` by real-item count (ties tied → add to all, to support mobile/desktop duplicate-nav patterns); within that list, clusters items by style and clones from the largest cluster via `pickMainNavTemplate` so a new "main page" link doesn't inherit CTA-button styling. Inserts the new item before any trailing `data-editor-ui` placeholder so it lands at the end of the real items, not after the (+). The clone is scrubbed of inherited `data-gitqi-nav-item-bound` markers and editor-UI children via `prepareClonedNavItem` so the follow-up `activateNav` binds fresh controls (no missing ← → until reload).
+
+Flat-anchor fallback (no `<ul>` in the nav): clones from the template's own cluster and inserts after the cluster's last anchor.
 
 **Hamburger script pattern** — nav inline scripts should bind to the `<nav>` element (not `document` or `window`) so listeners are cleaned up when the nav is replaced and re-bound when `rerunInlineScripts` re-executes them:
 
@@ -247,11 +287,14 @@ Intercepts clicks on `<a>` elements inside `[data-zone]` or `<nav>` in the captu
 
 Multi-page management. Requires folder access (`dirHandle`).
 
-- `openPagesPanel()` — toggled by the Pages toolbar button. Lists all pages from `pagesInventory`, with Open and ✕ Delete per page.
-- `promptAddPage` / `generatePage(description, navLabel, filename, { model })`: snapshot, build prompt (style block, nav-specific CSS, nav HTML verbatim, example section), call AI, write to disk, register in inventory, `addLinkToNav` programmatically, `activateNav()`, force-sync to distribute the new link + shared head to all pages including the new file.
+- `openPagesPanel()` — toggled by the Pages toolbar button. Lists all pages from `pagesInventory`, with **⧉ Duplicate** + **Open** + **✕ Delete** per page (Duplicate is the only button shown for the current page).
+- `promptAddPage` / `generatePage(description, navLabel, filename, { model })`: AI-only, gated on `hasGemini`. Snapshot, build prompt (style block, nav-specific CSS, nav HTML verbatim, example section), call AI, write to disk, register in inventory, `addLinkToNav` programmatically, `activateNav()`, force-sync. The **+ Add Page** button at the bottom of the panel only appears when `hasGemini`.
+- `promptDuplicatePage(sourcePage)` / `duplicatePage(sourcePage, newFilename, navLabel)` — **no AI**, available regardless of Gemini. Modal collects new filename (default: `{stem}-copy`) and optional nav label; `sanitizeFilename` lowercases, replaces whitespace with hyphens, strips characters outside `[a-z0-9._-]`, and ensures a `.html` suffix; rejects collisions with `pagesInventory`. Reads source bytes (for the current page, `serialize({ local: true })` is used instead so any unsaved live edits are captured), rewrites `<title>` via `filenameToTitle`, writes to disk, registers in inventory, `addLinkToNav` to the current nav, force-sync.
 - `deletePageFromSite(page)`: `removePageFromNav` strips nav links pointing to the file, remove from inventory, `dirHandle.removeEntry(filename)`, force-sync to clean nav across all pages.
 
 ### 13. AI Section Generator
+
+Gated on `hasGemini`. `activateZones` only injects the **+ Add Section** buttons when Gemini is configured. There is no native equivalent — to seed a new section without AI, users duplicate an existing section and edit the copy.
 
 `promptAddSection(insertAfterZone)` → modal → snapshot → `generateSection`:
 - `buildSectionPrompt()` sends: style block + example zone HTML
@@ -290,7 +333,7 @@ Each AI Studio model has its own RPM/RPD quota, so falling back on 429 also work
 Both modes:
 - Remove all `[data-editor-ui]` (toolbar, modals, hover buttons, hint pills)
 - Remove `contenteditable` and `spellcheck`
-- Remove `data-gitqi-bound`, `data-gitqi-nav-bound`, `data-gitqi-video-bound`
+- Remove `data-gitqi-bound`, `data-gitqi-nav-bound`, `data-gitqi-nav-item-bound`, `data-gitqi-video-bound`
 - Resolve `img[data-gitqi-src]` (blob URL → stored relative path)
 - Strip any inline `style` attribute on `<html>` (older versions wrote CSS vars there for live preview; would shadow `:root` updates)
 - Restore the original `body { padding-top }` and any fixed-nav `top` offset that was shifted for the toolbar
@@ -302,9 +345,9 @@ Both modes:
 
 `exportToFile()` runs `serialize({ local: false })` and triggers a download.
 
-### 14a. Email obfuscation (publish-time only)
+### 14a. Email obfuscation (publish-output only)
 
-Plain `mailto:` addresses in published HTML are easy targets for spam scrapers. `obfuscateMailtoLinks(root)` runs in the publish path only — edits stay readable in the editor.
+Plain `mailto:` addresses in deployed HTML are easy targets for spam scrapers. `obfuscateMailtoLinks(root)` runs inside `serialize({ local: false })`, which means it covers **both** Publish and Export — every artifact that leaves the editor has obfuscated mailto links. Live edits and `local:true` (auto-save to disk) stay readable so the editor remains usable.
 
 For each `<a href="mailto:…">`:
 - Encode the full mailto URL via `gqEncode` (`btoa(unescape(encodeURIComponent(reversed-string)))`) — base64 of the UTF-8 reversed string. Store in `data-gqe`. Set `href="javascript:void(0)"`.
@@ -317,6 +360,8 @@ A single inline decoder script is appended once per page (idempotent via `[data-
 **Cross-document safety** — `obfuscateMailtoLinks` is also called on parsed-from-disk pages in `publishSite()`. Helpers use `node.ownerDocument.create…` (not the main `document`) so nodes are created in the correct doc.
 
 ### 15. GitHub Publisher
+
+Gated on `hasGitHub`. The Publish toolbar button is not rendered when `githubToken` or `repo` is missing — Export becomes the rightmost CTA in that mode and `publishSite()` cannot be invoked from the UI. `publishSite()` itself still has its `if (!githubToken || !repo)` guard as a defence-in-depth check.
 
 `publishSite()`:
 
@@ -332,9 +377,19 @@ The disk-loaded pages were last saved with `local: true`, so they still have pla
 
 Snapshot-based, capped at 20 entries. Text edits use the browser's native undo (handled inside `contenteditable`); structural changes capture a snapshot.
 
-`snapshotForUndo()` is called before: section delete, section reformat, nav reformat, generate section, generate page, delete page, **duplicate section**, **move section**, remove video, and a few smaller edge cases.
+`snapshotForUndo()` is called before every DOM mutation a user might want to undo. The current trigger list:
 
-`captureSnapshot()` clones `<body>`, strips `[data-editor-ui]` and binding markers, and stores `bodyHTML` plus the main style content, all `<style id="__gitqi-section-*">`, and `<style id="__gitqi-nav-styles">`.
+- **Sections** — delete, duplicate, move ↑/↓, reformat (AI), add (AI), empty-editable remove (the red ✕ pill).
+- **Pages** — generate (AI), duplicate, delete.
+- **Nav** — reformat (AI), native add link, native move ← →, link-popover Remove link (in all three branches: nav, editable-body, non-editable-body).
+- **Images** — image upload (so swapping an `<img src>` is reversible; the old asset file isn't deleted, so undo just restores the old src that already exists in `assets/`).
+- **Videos** — URL change in the YouTube popover; Remove video.
+- **Inline text formatting** — code wrap/unwrap, link wrap (createLink), `wrapSelectionInStyledSpan` (color / font / size — one snapshot for the cleanup-clear + wrap pair), explicit `clearInlineStyleFromSelection` ("Remove color" / "Clear font" / "Normal"). Bold/italic still use the browser's native `execCommand` undo since those are pure text edits inside `contenteditable`.
+- **Link popover live edits** — one snapshot per popover session, taken lazily on the first mutation. Per-keystroke snapshotting would burn through the 20-entry stack in seconds; Ctrl+Z reverts the whole popover-session worth of edits in one step.
+
+When in doubt, snapshot. Snapshot cost is one body clone + a handful of `<style>` text copies — cheap. The undo stack is capped at `UNDO_LIMIT = 20`; oldest entries fall off.
+
+`captureSnapshot()` clones `<body>`, strips `[data-editor-ui]` and binding markers (`data-gitqi-bound`, `data-gitqi-nav-bound`, `data-gitqi-nav-item-bound`, `data-gitqi-video-bound`), and stores `bodyHTML` plus the main style content, all `<style id="__gitqi-section-*">`, and `<style id="__gitqi-nav-styles">`.
 
 `restoreSnapshot(snapshot)`: disconnect mutation observer → close popovers → save then re-attach `[data-editor-ui]` children → replace `body.innerHTML` → restore style blocks → `activateZones() + activateNav()` → `rerunInlineScripts(nav)` (rebinds hamburger toggles) → re-bind mutation observer → reset `lastSyncedSharedSnapshot`.
 

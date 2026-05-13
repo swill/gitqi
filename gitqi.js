@@ -1,7 +1,11 @@
 /**
  * gitqi.js — v1.0.0
  * Zero-dependency browser-based site editor.
- * Activates only when window.SITE_SECRETS is present (local edit mode).
+ * Always activates; features degrade based on which secrets are present:
+ *   - With geminiKey:            AI-driven Reformat / Add Section / Add Page.
+ *   - With githubToken + repo:   one-click Publish + asset uploads to GitHub.
+ *   - With neither (offline):    in-place edits, sections, sync, Duplicate Page,
+ *                                Export. Folder access is still required.
  * Stripped from exported/published HTML automatically.
  */
 (function () {
@@ -9,7 +13,13 @@
 
   const VERSION = '1.0.0';
 
-  if (!window.SITE_SECRETS) return;
+  // SITE_SECRETS is optional. When absent or partial, the editor runs in
+  // degraded mode: features that require remote services are hidden, but
+  // local editing (text, images via folder access, sections, sync) still works.
+  //   - githubToken + repo present → Publish enabled, image uploads pushed to GitHub
+  //   - geminiKey present          → AI features enabled (Reformat, Add Section, Add Page)
+  //   - neither present            → "offline" mode: Export + folder-based editing only
+  const SITE_SECRETS = window.SITE_SECRETS || {};
 
   // Base URL of this script on disk / CDN — used to locate sibling assets like
   // google-fonts.json. Captured here while document.currentScript is still valid
@@ -52,7 +62,13 @@
     shadowCta: '0 14px 32px -12px rgba(255, 140, 60, 0.55)',
   };
 
-  const { geminiKey, githubToken, repo, branch = 'main' } = window.SITE_SECRETS;
+  const { geminiKey, githubToken, repo, branch = 'main' } = SITE_SECRETS;
+
+  // Capability flags — checked throughout to gate features that depend on
+  // remote services. Computed once at load and read freely; SITE_SECRETS is
+  // not expected to change during a session.
+  const hasGitHub = !!(githubToken && repo);
+  const hasGemini = !!geminiKey;
 
   // ─── State ────────────────────────────────────────────────────────────────
 
@@ -180,17 +196,53 @@
     undoBtn.addEventListener('click', undo);
     redoBtn.addEventListener('click', redo);
 
+    const syncBtn = toolbarBtn('⟲');
+    syncBtn.title = 'Sync nav + footer + theme to all other pages';
+    syncBtn.addEventListener('click', manualSync);
+
     const pagesBtn = toolbarBtn('Pages');
     const themeBtn = toolbarBtn('Theme');
-    const exportBtn = toolbarBtn('Export');
-    const publishBtn = toolbarBtn('Publish', true);
+    const exportBtn = toolbarBtn('Export', !hasGitHub); // Export becomes the CTA when Publish is hidden
+    const publishBtn = hasGitHub ? toolbarBtn('Publish', true) : null;
 
     pagesBtn.addEventListener('click', openPagesPanel);
     themeBtn.addEventListener('click', openThemeEditor);
     exportBtn.addEventListener('click', exportToFile);
-    publishBtn.addEventListener('click', publishSite);
+    if (publishBtn) publishBtn.addEventListener('click', publishSite);
 
-    bar.append(logo, title, spacer, status, undoBtn, redoBtn, pagesBtn, themeBtn, exportBtn, publishBtn);
+    // Help "?" icon: a small circular button always present at the right edge.
+    // Opens a side panel describing capabilities + degraded-mode notice.
+    const helpBtn = el('button', { 'data-editor-ui': '' });
+    helpBtn.textContent = '?';
+    helpBtn.title = 'GitQi help & capabilities';
+    css(helpBtn, {
+      width: '26px', height: '26px', padding: '0',
+      marginLeft: '4px',
+      border: '1.5px solid rgba(253, 251, 245, 0.4)',
+      borderRadius: '50%',
+      background: 'transparent',
+      color: T.bg,
+      cursor: 'pointer',
+      fontSize: '13px',
+      fontWeight: '600',
+      fontFamily: T.fontBody,
+      lineHeight: '1',
+      transition: 'background 0.18s ease, border-color 0.18s ease',
+    });
+    helpBtn.addEventListener('mouseenter', () => {
+      helpBtn.style.background = 'rgba(253, 251, 245, 0.15)';
+      helpBtn.style.borderColor = T.accent3;
+    });
+    helpBtn.addEventListener('mouseleave', () => {
+      helpBtn.style.background = 'transparent';
+      helpBtn.style.borderColor = 'rgba(253, 251, 245, 0.4)';
+    });
+    helpBtn.addEventListener('click', openHelpPanel);
+
+    const toolbarChildren = [logo, title, spacer, status, undoBtn, redoBtn, syncBtn, pagesBtn, themeBtn, exportBtn];
+    if (publishBtn) toolbarChildren.push(publishBtn);
+    toolbarChildren.push(helpBtn);
+    bar.append(...toolbarChildren);
     document.body.prepend(bar);
 
     // Push body content down so toolbar doesn't overlap
@@ -287,9 +339,44 @@
     pruneUnusedGoogleFontLinks();
     if (dirHandle) {
       await writeCurrentPageToLocalFile();
-      await syncSharedToOtherPagesIfChanged();
+      const result = await syncSharedToOtherPagesIfChanged();
+      // Auto-sync: stay quiet when nothing changed, but announce real propagation
+      // so the user can tell when nav/footer edits reached the other pages.
+      if (result && !result.skipped && result.syncedCount > 0) {
+        const n = result.syncedCount;
+        showStatus(`Synced shared elements to ${n} other page${n === 1 ? '' : 's'} ✓`);
+      }
     }
     // No dirHandle yet — changes accumulate in the DOM until the folder is linked.
+  }
+
+  // Manual sync trigger (toolbar ⟲ button). Forces a sync even when nothing
+  // looks changed — useful after hand-editing the HTML outside the editor, or
+  // when the user wants to confirm propagation. Always shows a status message.
+  async function manualSync() {
+    if (!dirHandle) {
+      showStatus('Link your site folder before syncing', true);
+      return;
+    }
+    if (!pagesInventory || pagesInventory.pages.length <= 1) {
+      showStatus('Nothing to sync — only one page', false);
+      return;
+    }
+    // Reset the baseline so the change-detection guard doesn't short-circuit a
+    // manual request. This matches the pattern used by reformatNav / addPage.
+    lastSyncedSharedSnapshot = '';
+    showStatus('Syncing…');
+    const result = await syncSharedToOtherPagesIfChanged();
+    if (!result || result.skipped) {
+      showStatus('Sync skipped', true);
+      return;
+    }
+    const n = result.syncedCount;
+    if (result.failedFiles && result.failedFiles.length) {
+      showStatus(`Synced ${n} page${n === 1 ? '' : 's'}; ${result.failedFiles.length} failed: ${result.failedFiles.join(', ')}`, true);
+    } else {
+      showStatus(`Synced shared elements to ${n} other page${n === 1 ? '' : 's'} ✓`);
+    }
   }
 
   // ── File System Access path ──────────────────────────────────────────────
@@ -602,6 +689,9 @@
     const clone = nav.cloneNode(true);
     clone.querySelectorAll('[data-editor-ui]').forEach(n => n.remove());
     clone.removeAttribute('data-gitqi-nav-bound');
+    // Strip per-item binding markers added by native nav controls so the
+    // serialized HTML matches what would be produced by a fresh activate.
+    clone.querySelectorAll('[data-gitqi-nav-item-bound]').forEach(n => n.removeAttribute('data-gitqi-nav-item-bound'));
     return clone.outerHTML;
   }
 
@@ -721,9 +811,9 @@
   }
 
   async function syncSharedToOtherPagesIfChanged() {
-    if (!dirHandle || !pagesInventory) return;
+    if (!dirHandle || !pagesInventory) return { skipped: true, reason: 'no-folder' };
     const snapshot = getSharedSnapshot();
-    if (snapshot === lastSyncedSharedSnapshot) return;
+    if (snapshot === lastSyncedSharedSnapshot) return { skipped: true, reason: 'unchanged' };
 
     const shared = getSharedHeadElements();
     const currentNavHTML = getNavHTML();
@@ -733,6 +823,8 @@
     const sourceNav = document.querySelector('nav');
     const activeMarker = sourceNav ? extractActiveMarker(sourceNav, CURRENT_FILENAME) : null;
 
+    let syncedCount = 0;
+    const failedFiles = [];
     for (const page of pagesInventory.pages) {
       if (page.file === CURRENT_FILENAME) continue;
       try {
@@ -833,10 +925,14 @@
         const writable = await writeFh.createWritable();
         await writable.write(updated);
         await writable.close();
-      } catch (_) {} // Non-fatal — skip pages that can't be read/written
+        syncedCount++;
+      } catch (_) {
+        failedFiles.push(page.file); // Non-fatal — surfaced to caller, sync continues
+      }
     }
 
     lastSyncedSharedSnapshot = snapshot;
+    return { skipped: false, syncedCount, failedFiles };
   }
 
   // Upsert or remove a <link rel="X"> in `doc` to match the source element.
@@ -874,7 +970,7 @@
 
   function activateZones() {
     document.querySelectorAll('[data-zone]').forEach(zone => activateZone(zone));
-    injectAddSectionButtons();
+    if (hasGemini) injectAddSectionButtons(); // section creation requires AI; hidden when offline
   }
 
   function preventBlockOnEnter(e) {
@@ -922,7 +1018,7 @@
       injectDuplicateButton(section);
       injectMoveButtons(section);
     }
-    injectReformatButton(section);
+    if (hasGemini) injectReformatButton(section); // AI-driven; hidden when offline
     injectDeleteButton(section);
   }
 
@@ -1757,6 +1853,13 @@ RULES:
     if (nav.dataset.gitqiNavBound) return;
     nav.dataset.gitqiNavBound = '1';
 
+    // Native nav controls (add/remove/reorder links) are always present —
+    // they don't depend on AI and form the core editing model for nav. The
+    // AI-driven Reformat button is layered on top when Gemini is available.
+    injectNavControls(nav);
+
+    if (!hasGemini) return;
+
     const btn = el('button', { 'data-editor-ui': '' });
     btn.textContent = '⟳ Reformat Nav';
     css(btn, {
@@ -1809,6 +1912,259 @@ RULES:
       nav.style.position = 'relative';
     }
     nav.appendChild(btn);
+  }
+
+  // ─── Native nav controls (add / remove / reorder links) ───────────────────
+  //
+  // Layered onto every nav regardless of AI availability. The Reformat Nav
+  // button still handles "restyle this nav" use cases; these controls handle
+  // the routine "add a link" / "swap two links" cases that shouldn't require
+  // AI to express. Removal of nav items happens via the link popover's
+  // "Remove link" — keeping it out of the per-item hover cluster avoids
+  // misclicks on the destructive action.
+  //
+  // Items within a list group are clustered by class signature so that the
+  // common "main links + trailing CTA" pattern gets one (+) per cluster, and
+  // each (+) clones from its own cluster. A new main link doesn't accidentally
+  // come out wearing the CTA's button styling.
+
+  function injectNavControls(nav) {
+    // Re-bind is idempotent. activateNav re-runs whenever a page is added,
+    // duplicated, or the nav is reformatted, and each run needs to start from
+    // a clean slate — otherwise old (+) placeholders accumulate alongside
+    // fresh ones, and items still flagged data-gitqi-nav-item-bound get
+    // skipped (no ←→ until reload). Strip both up front.
+    nav.querySelectorAll('[data-gitqi-nav-add]').forEach(n => n.remove());
+    nav.querySelectorAll('[data-gitqi-nav-item-bound]').forEach(n => {
+      n.removeAttribute('data-gitqi-nav-item-bound');
+      n.querySelectorAll('[data-editor-ui]').forEach(c => c.remove());
+    });
+
+    nav.querySelectorAll('ul, ol').forEach(list => {
+      const items = Array.from(list.children)
+        .filter(c => c.tagName === 'LI' && !c.hasAttribute('data-editor-ui'));
+      items.forEach(injectNavItemControls);
+
+      // Insert a (+) after the last item of each contiguous style cluster.
+      // For the trailing cluster this lands at the end of the list; for
+      // earlier clusters it lands between the cluster and the next one, which
+      // visually reads as "add another item in this style here".
+      const clusters = clusterNavItemsByStyle(items);
+      clusters.forEach(cluster => {
+        const lastInCluster = cluster.items[cluster.items.length - 1];
+        insertNavGroupAddButton({ mode: 'list', list, afterItem: lastInCluster, cluster });
+      });
+    });
+
+    // Flat anchors: same clustering treatment for the bare-anchor pattern.
+    const flatAnchors = Array.from(nav.children)
+      .filter(c => c.tagName === 'A' && !c.hasAttribute('data-editor-ui') && !c.querySelector('img'));
+    if (flatAnchors.length) {
+      flatAnchors.forEach(injectNavItemControls);
+      const clusters = clusterNavItemsByStyle(flatAnchors);
+      clusters.forEach(cluster => {
+        const lastInCluster = cluster.items[cluster.items.length - 1];
+        insertNavGroupAddButton({ mode: 'flat', list: nav, afterItem: lastInCluster, cluster });
+      });
+    }
+  }
+
+  // Per-item hover-revealed control cluster: ← (move left/up) and → (move
+  // right/down). No remove button — removal is handled by the link popover so
+  // a hover misclick can't silently delete a nav entry.
+  function injectNavItemControls(item) {
+    if (item.dataset.gitqiNavItemBound) return;
+    item.dataset.gitqiNavItemBound = '1';
+
+    const controls = el('div', { 'data-editor-ui': '' });
+    css(controls, {
+      position: 'absolute',
+      top: '-10px',
+      right: '-6px',
+      display: 'flex',
+      gap: '2px',
+      opacity: '0',
+      pointerEvents: 'none',
+      transition: 'opacity 0.15s ease',
+      zIndex: '50',
+    });
+
+    const mkBtn = (label, title, action) => {
+      const b = el('button', { 'data-editor-ui': '' });
+      b.textContent = label;
+      b.title = title;
+      css(b, {
+        width: '18px', height: '18px', padding: '0',
+        border: `1px solid ${T.bg}`,
+        borderRadius: '50%',
+        background: T.primary,
+        color: T.bg,
+        cursor: 'pointer',
+        fontSize: '11px',
+        fontWeight: '700',
+        lineHeight: '1',
+        fontFamily: T.fontBody,
+        boxShadow: '0 2px 6px -1px rgba(26, 27, 58, 0.4)',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      });
+      b.addEventListener('click', e => {
+        e.preventDefault();
+        e.stopPropagation();
+        action();
+      });
+      b.addEventListener('mousedown', e => { e.stopPropagation(); }, true);
+      return b;
+    };
+
+    // Arrows ← → match the visual flow of typical horizontal navs. The
+    // underlying operation is still "swap with previous/next sibling", so they
+    // work correctly for vertical navs too.
+    const leftBtn  = mkBtn('←', 'Move left',  () => navMoveItem(item, -1));
+    const rightBtn = mkBtn('→', 'Move right', () => navMoveItem(item,  1));
+    controls.append(leftBtn, rightBtn);
+
+    if (getComputedStyle(item).position === 'static') {
+      item.style.position = 'relative';
+    }
+    item.appendChild(controls);
+
+    const show = () => { controls.style.opacity = '1'; controls.style.pointerEvents = 'auto'; };
+    const hide = () => { controls.style.opacity = '0'; controls.style.pointerEvents = 'none'; };
+    item.addEventListener('mouseenter', show);
+    item.addEventListener('mouseleave', hide);
+  }
+
+  // Walk past editor-injected siblings (the (+) button LI, other controls) so
+  // reorder operates on real link items only.
+  function navItemSiblingIgnoringUI(item, dir) {
+    let sib = dir < 0 ? item.previousElementSibling : item.nextElementSibling;
+    while (sib && sib.hasAttribute('data-editor-ui')) {
+      sib = dir < 0 ? sib.previousElementSibling : sib.nextElementSibling;
+    }
+    return sib;
+  }
+
+  function navMoveItem(item, dir) {
+    const target = navItemSiblingIgnoringUI(item, dir);
+    if (!target) return; // already at the end of its group
+    snapshotForUndo();
+    if (dir < 0) target.before(item);
+    else         target.after(item);
+    setDirty(true);
+    lastSyncedSharedSnapshot = '';
+  }
+
+  // Insert one cluster-scoped (+) button immediately after `afterItem`. The
+  // button's click handler captures the cluster's last item as its clone
+  // template — that's stable across DOM mutations as long as the captured
+  // element stays in the document.
+  function insertNavGroupAddButton({ mode, list, afterItem, cluster }) {
+    const btn = el('button', { 'data-editor-ui': '' });
+    btn.textContent = '+';
+    btn.title = 'Add nav link';
+    css(btn, {
+      width: '24px', height: '24px', padding: '0',
+      border: `1.5px dashed ${T.accent3}`,
+      borderRadius: '50%',
+      background: 'rgba(26, 27, 58, 0.7)',
+      color: T.accent3,
+      cursor: 'pointer',
+      fontSize: '14px',
+      fontWeight: '700',
+      lineHeight: '1',
+      fontFamily: T.fontBody,
+      opacity: '0',
+      pointerEvents: 'none',
+      transition: 'opacity 0.15s ease, background 0.15s ease, transform 0.15s ease',
+    });
+    btn.addEventListener('mouseenter', () => {
+      btn.style.background = T.accent;
+      btn.style.color = T.primary;
+      btn.style.transform = 'scale(1.1)';
+    });
+    btn.addEventListener('mouseleave', () => {
+      btn.style.background = 'rgba(26, 27, 58, 0.7)';
+      btn.style.color = T.accent3;
+      btn.style.transform = 'scale(1)';
+    });
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      // Re-resolve "last in cluster" at click time. The user may have moved
+      // items around since we bound this handler; using the captured `cluster`
+      // and asking it which of its items is still present + last keeps the
+      // clone template in sync with what the user actually sees on screen.
+      const stillPresent = cluster.items.filter(n => n.isConnected);
+      const template = stillPresent.length ? stillPresent[stillPresent.length - 1] : cluster.items[cluster.items.length - 1];
+      addNavLinkAfter(template, mode === 'list' ? list : null);
+    });
+
+    if (mode === 'list') {
+      // Wrap the (+) in an LI so list styling cascades. data-editor-ui keeps
+      // it out of serialization; data-gitqi-nav-add lets injectNavControls
+      // find and remove its own prior placeholders on re-bind.
+      const li = document.createElement('li');
+      li.setAttribute('data-editor-ui', '');
+      li.setAttribute('data-gitqi-nav-add', '1');
+      li.style.listStyle = 'none';
+      li.appendChild(btn);
+      afterItem.after(li);
+    } else {
+      btn.setAttribute('data-gitqi-nav-add', '1');
+      afterItem.after(btn);
+    }
+
+    // Hover scope is the whole nav-group container — list for list mode, nav
+    // for flat mode — so the (+) is reachable when the user is hovering the
+    // group as a whole (e.g. dragging the cursor from one item to the next).
+    const host = list;
+    const show = () => { btn.style.opacity = '1'; btn.style.pointerEvents = 'auto'; };
+    const hide = () => { btn.style.opacity = '0'; btn.style.pointerEvents = 'none'; };
+    host.addEventListener('mouseenter', show);
+    host.addEventListener('mouseleave', hide);
+  }
+
+  // Clone `template` (an LI or anchor) and drop the copy right after it. The
+  // clone inherits all of the template's classes / wrapper markup, which is
+  // what makes "add another item in this style" work without us trying to
+  // synthesize the right structure for arbitrary nav designs.
+  function addNavLinkAfter(template, list) {
+    if (!template || !template.isConnected) {
+      showStatus('Cannot add link — template item is missing', true);
+      return;
+    }
+    snapshotForUndo();
+
+    const newItem = template.cloneNode(true);
+    newItem.removeAttribute('data-gitqi-nav-item-bound');
+    newItem.querySelectorAll('[data-editor-ui]').forEach(n => n.remove());
+    newItem.style.position = ''; // injectNavItemControls re-applies if needed
+
+    let newAnchor;
+    if (newItem.tagName === 'A') {
+      newAnchor = newItem;
+    } else {
+      newAnchor = newItem.querySelector('a');
+    }
+    if (!newAnchor) {
+      showStatus('Cannot add link — template has no <a>', true);
+      return;
+    }
+
+    newAnchor.setAttribute('href', '#');
+    newAnchor.textContent = 'New Link';
+    ACTIVE_CLASS_CANDIDATES.forEach(c => newAnchor.classList.remove(c));
+    newAnchor.removeAttribute('aria-current');
+
+    template.after(newItem);
+    injectNavItemControls(newItem);
+
+    setDirty(true);
+    lastSyncedSharedSnapshot = '';
+
+    setTimeout(() => openLinkPopover(newAnchor), 0);
   }
 
   function promptReformatNav(nav) {
@@ -2041,7 +2397,9 @@ RULES:
 
   function refreshAddButtons() {
     document.querySelectorAll('.__gitqi-add-wrap').forEach(el => el.remove());
-    injectAddSectionButtons();
+    // Section creation goes through AI; keep the (+ Add Section) buttons out
+    // of offline mode the same way activateZones does on first load.
+    if (hasGemini) injectAddSectionButtons();
   }
 
   function makeAddButton(insertAfterZone) {
@@ -2109,6 +2467,114 @@ RULES:
     return wrap;
   }
 
+  // ─── Help Panel ───────────────────────────────────────────────────────────
+  //
+  // Always-available reference: keyboard shortcuts, capability summary, and a
+  // "Currently unavailable" block listing any missing service integrations
+  // along with how to enable them. Mutually exclusive with Pages/Theme panels.
+
+  function openHelpPanel() {
+    const existing = document.getElementById('__gitqi-help-panel');
+    if (existing) { existing.remove(); return; }
+
+    // Close other side panels so we don't stack
+    const pagesPanel = document.getElementById('__gitqi-pages-panel');
+    if (pagesPanel) pagesPanel.remove();
+    const themePanel = document.getElementById('__gitqi-theme-panel');
+    if (themePanel) themePanel.remove();
+
+    const panel = el('div', { id: '__gitqi-help-panel', 'data-editor-ui': '' });
+    css(panel, {
+      position: 'fixed',
+      top: '44px',
+      right: '0',
+      bottom: '0',
+      width: '320px',
+      background: T.bg,
+      borderLeft: `1px solid ${T.border}`,
+      zIndex: '999998',
+      overflowY: 'auto',
+      fontFamily: T.fontBody,
+      fontSize: '13px',
+      boxShadow: '-8px 0 28px -8px rgba(26, 27, 58, 0.18)',
+      color: T.primary,
+    });
+
+    const missing = [];
+    if (!hasGemini) missing.push({
+      label: 'AI features',
+      detail: 'Reformat Section, Reformat Nav, Add Section, Add Page',
+      enable: 'Set <code>geminiKey</code> in <code>secrets.js</code> — get a free key at <a href="https://aistudio.google.com" target="_blank" rel="noopener" style="color:' + T.secondary + '">Google AI Studio</a>.',
+      note:   'Navigation can still be edited by hand using the (+) and ← → controls; sections can be added by duplicating an existing one.',
+    });
+    if (!hasGitHub) missing.push({
+      label: 'Publish to GitHub',
+      detail: 'One-click deploy + image uploads to your site repo',
+      enable: 'Set <code>githubToken</code> and <code>repo</code> in <code>secrets.js</code>. Use a fine-grained PAT with <em>contents: read+write</em> on the site repo only.',
+      note:   'Export gives you clean HTML you can upload anywhere; images are saved to your local <code>assets/</code> folder.',
+    });
+
+    const missingBlock = missing.length ? `
+      <div style="padding:14px 18px;background:${T.bgAlt};border-left:3px solid ${T.accent4};margin:14px 18px;border-radius:${T.radiusSm};">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:${T.accent4};margin-bottom:8px;">Currently unavailable</div>
+        ${missing.map(m => `
+          <div style="margin-bottom:12px;">
+            <div style="font-weight:600;font-size:13px;color:${T.primary};">${m.label}</div>
+            <div style="font-size:12px;color:${T.textMuted};margin:2px 0 4px;">${m.detail}</div>
+            <div style="font-size:11.5px;color:${T.textMuted};line-height:1.5;">${m.enable}</div>
+            <div style="font-size:11.5px;color:${T.textMuted};line-height:1.5;margin-top:4px;font-style:italic;">${m.note}</div>
+          </div>
+        `).join('')}
+      </div>
+    ` : '';
+
+    panel.innerHTML = `
+      <div style="padding:16px 18px 14px;border-bottom:1px solid ${T.borderSoft};display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:${T.bg};z-index:1;">
+        <strong style="font-size:17px;color:${T.primary};font-family:${T.fontHead};font-weight:600;letter-spacing:-0.015em;">Help</strong>
+        <button id="__gitqi-help-close" style="background:none;border:none;cursor:pointer;font-size:20px;color:${T.textMuted};line-height:1;padding:0 4px;">&times;</button>
+      </div>
+      ${missingBlock}
+      <div style="padding:14px 18px 4px;">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:${T.textMuted};margin-bottom:8px;">What you can do</div>
+        <ul style="margin:0 0 14px;padding-left:18px;font-size:12.5px;line-height:1.7;color:${T.primary};">
+          <li>Click any text or heading to edit in place</li>
+          <li>Click any image to replace it from your computer</li>
+          <li>Click any video to paste a new YouTube URL</li>
+          <li>Hover a section for <strong>Duplicate · Reformat · Delete · Move ↑ ↓</strong></li>
+          <li>Hover a nav link for <strong>↑ ↓ ✕</strong>; click <strong>+</strong> at the end of a group to add a link</li>
+          <li>Click <strong>⟲</strong> to push nav + footer + theme to every other page</li>
+          <li>Use the <strong>Pages</strong> panel to open, duplicate, or delete pages</li>
+          <li>Use the <strong>Theme</strong> panel to change colors, fonts, spacing, and favicon</li>
+        </ul>
+
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:${T.textMuted};margin-bottom:8px;">Keyboard shortcuts</div>
+        <table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:14px;">
+          <tr><td style="padding:3px 0;color:${T.textMuted};">Undo</td><td style="text-align:right;font-family:${T.fontMono};color:${T.primary};">Ctrl+Z</td></tr>
+          <tr><td style="padding:3px 0;color:${T.textMuted};">Redo</td><td style="text-align:right;font-family:${T.fontMono};color:${T.primary};">Ctrl+Shift+Z</td></tr>
+          <tr><td style="padding:3px 0;color:${T.textMuted};">Bold (selection)</td><td style="text-align:right;font-family:${T.fontMono};color:${T.primary};">Ctrl+B</td></tr>
+          <tr><td style="padding:3px 0;color:${T.textMuted};">Italic (selection)</td><td style="text-align:right;font-family:${T.fontMono};color:${T.primary};">Ctrl+I</td></tr>
+        </table>
+
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:${T.textMuted};margin-bottom:8px;">Where edits go</div>
+        <p style="margin:0 0 14px;font-size:12px;line-height:1.6;color:${T.textMuted};">
+          GitQi writes directly to the HTML files in your linked folder. Auto-save runs ~1.5s after each edit. Nav + footer + theme changes also propagate to every other page in the same folder.
+        </p>
+
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:${T.textMuted};margin-bottom:8px;">More</div>
+        <p style="margin:0 0 18px;font-size:12px;line-height:1.6;color:${T.textMuted};">
+          Docs and source: <a href="https://github.com/swill/gitqi" target="_blank" rel="noopener" style="color:${T.secondary};">github.com/swill/gitqi</a><br>
+          Version <span style="font-family:${T.fontMono};">${VERSION}</span>
+        </p>
+      </div>
+    `;
+
+    document.body.appendChild(panel);
+    const closeBtn = panel.querySelector('#__gitqi-help-close');
+    closeBtn.addEventListener('mouseenter', () => { closeBtn.style.color = T.primary; });
+    closeBtn.addEventListener('mouseleave', () => { closeBtn.style.color = T.textMuted; });
+    closeBtn.addEventListener('click', () => panel.remove());
+  }
+
   // ─── Pages Manager ────────────────────────────────────────────────────────
 
   function openPagesPanel() {
@@ -2118,6 +2584,9 @@ RULES:
     // Close theme panel if open
     const themePanel = document.getElementById('__gitqi-theme-panel');
     if (themePanel) themePanel.remove();
+    // Close help panel if open
+    const helpPanel = document.getElementById('__gitqi-help-panel');
+    if (helpPanel) helpPanel.remove();
 
     if (!pagesInventory) {
       showStatus('Link your site folder to manage pages', true);
@@ -2198,6 +2667,33 @@ RULES:
       info.append(nameEl, fileEl);
       row.append(info);
 
+      // Duplicate is available on every page row (including the current one):
+      // a no-AI way to seed a new page from an existing file. Requires folder
+      // access so we can read the source bytes off disk and write the copy.
+      if (dirHandle) {
+        const dupBtn = el('button');
+        dupBtn.textContent = '⧉';
+        dupBtn.title = 'Duplicate page';
+        css(dupBtn, {
+          flexShrink: '0',
+          width: '26px',
+          height: '26px',
+          padding: '0',
+          background: 'transparent',
+          border: `1px solid ${T.borderSoft}`,
+          borderRadius: '50%',
+          color: T.textMuted,
+          cursor: 'pointer',
+          fontSize: '13px',
+          fontFamily: T.fontBody,
+          transition: 'background 0.15s, color 0.15s, border-color 0.15s',
+        });
+        dupBtn.addEventListener('mouseenter', () => { dupBtn.style.background = T.accent2; dupBtn.style.color = '#fff'; dupBtn.style.borderColor = 'transparent'; });
+        dupBtn.addEventListener('mouseleave', () => { dupBtn.style.background = 'transparent'; dupBtn.style.color = T.textMuted; dupBtn.style.borderColor = T.borderSoft; });
+        dupBtn.addEventListener('click', () => { panel.remove(); promptDuplicatePage(page); });
+        row.append(dupBtn);
+      }
+
       if (!isCurrent) {
         const openBtn = el('a');
         openBtn.textContent = 'Open →';
@@ -2264,35 +2760,40 @@ RULES:
       flexShrink: '0',
     });
 
-    const addBtn = el('button');
-    addBtn.textContent = '+ Add Page';
-    css(addBtn, {
-      width: '100%',
-      padding: '10px',
-      background: dirHandle ? T.accent : T.bgAlt,
-      color: dirHandle ? T.primary : T.textMuted,
-      border: `2px solid transparent`,
-      borderRadius: T.radiusPill,
-      cursor: dirHandle ? 'pointer' : 'default',
-      fontSize: '13px',
-      fontWeight: '600',
-      fontFamily: T.fontBody,
-      letterSpacing: '-0.005em',
-      boxShadow: dirHandle ? T.shadowCta : 'none',
-      transition: 'background 0.18s ease, transform 0.18s ease',
-    });
-    if (dirHandle) {
-      addBtn.addEventListener('mouseenter', () => { addBtn.style.background = T.accent2; addBtn.style.transform = 'translateY(-2px)'; });
-      addBtn.addEventListener('mouseleave', () => { addBtn.style.background = T.accent; addBtn.style.transform = 'translateY(0)'; });
-      addBtn.addEventListener('click', () => { panel.remove(); promptAddPage(); });
-    }
-    footer.appendChild(addBtn);
+    // Add Page is AI-driven (generates a new page from a description). Hidden
+    // when Gemini is not configured; users can still Duplicate an existing page
+    // (see Pages-panel row controls) to seed a new file without AI.
+    if (hasGemini) {
+      const addBtn = el('button');
+      addBtn.textContent = '+ Add Page';
+      css(addBtn, {
+        width: '100%',
+        padding: '10px',
+        background: dirHandle ? T.accent : T.bgAlt,
+        color: dirHandle ? T.primary : T.textMuted,
+        border: `2px solid transparent`,
+        borderRadius: T.radiusPill,
+        cursor: dirHandle ? 'pointer' : 'default',
+        fontSize: '13px',
+        fontWeight: '600',
+        fontFamily: T.fontBody,
+        letterSpacing: '-0.005em',
+        boxShadow: dirHandle ? T.shadowCta : 'none',
+        transition: 'background 0.18s ease, transform 0.18s ease',
+      });
+      if (dirHandle) {
+        addBtn.addEventListener('mouseenter', () => { addBtn.style.background = T.accent2; addBtn.style.transform = 'translateY(-2px)'; });
+        addBtn.addEventListener('mouseleave', () => { addBtn.style.background = T.accent; addBtn.style.transform = 'translateY(0)'; });
+        addBtn.addEventListener('click', () => { panel.remove(); promptAddPage(); });
+      }
+      footer.appendChild(addBtn);
 
-    if (!dirHandle) {
-      const note = el('div');
-      note.textContent = 'Link your site folder to add pages.';
-      css(note, { fontSize: '11.5px', color: T.textMuted, marginTop: '8px', textAlign: 'center', fontStyle: 'italic' });
-      footer.appendChild(note);
+      if (!dirHandle) {
+        const note = el('div');
+        note.textContent = 'Link your site folder to add pages.';
+        css(note, { fontSize: '11.5px', color: T.textMuted, marginTop: '8px', textAlign: 'center', fontStyle: 'italic' });
+        footer.appendChild(note);
+      }
     }
 
     panel.append(header, list, footer);
@@ -2506,44 +3007,134 @@ RULES:
   }
 
   // Programmatically insert a new nav link into an existing <nav> element.
-  // Handles both list-based navs (<ul>/<ol> with <li><a>) and flat navs (<a> directly).
-  // If the nav has multiple link lists (e.g. desktop + mobile copy), updates all of them.
+  // Handles list-based navs (<ul>/<ol> with <li><a>) and flat navs (<a> direct
+  // children of <nav>).
+  //
+  // Picking the right *list* matters: many designs split the nav into a main
+  // <ul> and a separate CTA <ul> (or trailing CTA <a>). Adding the new page to
+  // both would land a CTA-styled link to the right of the call-to-action.
+  // Strategy: identify each list's item count, target the largest, and add to
+  // every list that ties for largest (covers mobile/desktop duplicate-nav
+  // patterns where two ULs are kept in sync).
+  //
+  // Picking the right *item to clone* matters too. Even within a single UL
+  // that mixes main links and a trailing CTA, we cluster by class signature
+  // and clone from the largest cluster so a new "main link" doesn't inherit
+  // CTA styling.
   function addLinkToNav(navEl, label, href) {
-    let added = false;
+    const lists = Array.from(navEl.querySelectorAll('ul, ol'));
+    const listCounts = lists.map(list => ({
+      list,
+      items: Array.from(list.children).filter(c =>
+        c.tagName === 'LI' && !c.hasAttribute('data-editor-ui') && c.querySelector('a')),
+    }));
+    const maxCount = listCounts.reduce((m, l) => Math.max(m, l.items.length), 0);
+    const targetLists = listCounts.filter(l => l.items.length === maxCount && maxCount > 0);
 
-    // Strategy 1: list-based nav — add to every <ul>/<ol> that contains page links
-    navEl.querySelectorAll('ul, ol').forEach(list => {
-      const items = list.querySelectorAll('li');
-      if (!items.length) return;
-      const lastItem = items[items.length - 1];
-      const anchor   = lastItem.querySelector('a');
-      if (!anchor) return;
+    if (targetLists.length) {
+      targetLists.forEach(({ list, items }) => {
+        const template = pickMainNavTemplate(items);
+        const newItem = prepareClonedNavItem(template, label, href);
+        // Append at the end of the real items, before any editor-UI placeholder.
+        const placeholder = Array.from(list.children).find(c =>
+          c.tagName === 'LI' && c.hasAttribute('data-editor-ui'));
+        if (placeholder) list.insertBefore(newItem, placeholder);
+        else             list.appendChild(newItem);
+      });
+      return true;
+    }
 
-      const newItem = lastItem.cloneNode(true);
-      const newA    = newItem.querySelector('a');
-      if (!newA) return;
-      newA.setAttribute('href', href);
-      newA.textContent = label;
-      // Strip active/current state classes that belong to other pages
-      newA.classList.remove('active', 'current', 'is-active', 'is-current', 'selected');
-      list.appendChild(newItem);
-      added = true;
-    });
-
-    if (added) return true;
-
-    // Strategy 2: flat nav — bare <a> elements (skip logo links that contain an <img>)
-    const anchors = Array.from(navEl.querySelectorAll('a[href]'))
-      .filter(a => !a.querySelector('img'));
+    // Flat <a> children of <nav>: skip logo links (those wrapping an <img>).
+    const anchors = Array.from(navEl.children).filter(c =>
+      c.tagName === 'A' && !c.hasAttribute('data-editor-ui') && !c.querySelector('img'));
     if (!anchors.length) return false;
 
-    const last = anchors[anchors.length - 1];
-    const newA  = last.cloneNode(true);
-    newA.setAttribute('href', href);
-    newA.textContent = label;
-    newA.classList.remove('active', 'current', 'is-active', 'is-current', 'selected');
-    last.after(newA);
+    const template = pickMainNavTemplate(anchors);
+    const newA = prepareClonedNavItem(template, label, href);
+    // Insert after the last anchor of the template's cluster, before any
+    // trailing editor-UI placeholder.
+    const cluster = clusterNavItemsByStyle(anchors).find(c => c.items.includes(template));
+    const lastOfCluster = cluster ? cluster.items[cluster.items.length - 1] : anchors[anchors.length - 1];
+    lastOfCluster.after(newA);
     return true;
+  }
+
+  // Clone a template nav item, scrub the runtime markers / editor-UI children
+  // it picked up while live in the DOM, and set the new link's text + href.
+  // Leaving the binding marker on the clone would make activateNav skip it
+  // (no ←→ controls until the user reloads).
+  function prepareClonedNavItem(template, label, href) {
+    const clone = template.cloneNode(true);
+    clone.removeAttribute('data-gitqi-nav-item-bound');
+    clone.querySelectorAll('[data-gitqi-nav-item-bound]').forEach(n =>
+      n.removeAttribute('data-gitqi-nav-item-bound'));
+    clone.querySelectorAll('[data-editor-ui]').forEach(n => n.remove());
+    // injectNavItemControls writes position:relative; clear so it re-applies
+    // only if needed (some host pages style LIs with their own positioning).
+    clone.style.position = '';
+    const anchor = clone.tagName === 'A' ? clone : clone.querySelector('a');
+    if (!anchor) return clone;
+    anchor.setAttribute('href', href);
+    anchor.textContent = label;
+    ACTIVE_CLASS_CANDIDATES.forEach(c => anchor.classList.remove(c));
+    anchor.removeAttribute('aria-current');
+    return clone;
+  }
+
+  // Stable class signature for cluster comparison. Sorted + lowercased + with
+  // state classes stripped, so "active" or "current" never makes one item
+  // look like a different cluster from its peers.
+  //
+  // For <li> items the signature combines the wrapper's classes AND the
+  // primary anchor's classes — that's where CTA styling almost always lives
+  // (e.g. `<li><a class="btn btn-primary">Get Started</a></li>` vs plain
+  // `<li><a>Home</a></li>`). Without folding the anchor in, the LIs look
+  // identical and the whole nav collapses into a single cluster.
+  function navClassKey(el) {
+    const parts = [];
+    const own = (el.getAttribute('class') || '')
+      .split(/\s+/)
+      .filter(Boolean)
+      .filter(c => !ACTIVE_CLASS_CANDIDATES.includes(c));
+    parts.push('w:' + own.sort().join(' '));
+    if (el.tagName === 'LI') {
+      const anchor = el.querySelector('a');
+      if (anchor) {
+        const aCls = (anchor.getAttribute('class') || '')
+          .split(/\s+/)
+          .filter(Boolean)
+          .filter(c => !ACTIVE_CLASS_CANDIDATES.includes(c));
+        parts.push('a:' + aCls.sort().join(' '));
+      }
+    }
+    return parts.join('|');
+  }
+
+  // Group a list of items into contiguous runs sharing the same class key.
+  // Returns an array of clusters: [{ key, items: [...] }, ...].
+  function clusterNavItemsByStyle(items) {
+    const clusters = [];
+    let current = null;
+    for (const item of items) {
+      const key = navClassKey(item);
+      if (!current || current.key !== key) {
+        current = { key, items: [] };
+        clusters.push(current);
+      }
+      current.items.push(item);
+    }
+    return clusters;
+  }
+
+  // Pick a "main link" item for cloning. With one cluster, the only option.
+  // With multiple, the largest cluster is the main-links group; the trailing
+  // single CTA cluster is the outlier we want to avoid. Ties (same size) break
+  // toward the earlier cluster, which is also typically the main group.
+  function pickMainNavTemplate(items) {
+    const clusters = clusterNavItemsByStyle(items);
+    let best = clusters[0];
+    for (const c of clusters) if (c.items.length > best.items.length) best = c;
+    return best.items[0];
   }
 
   function buildPagePrompt(description, navLabel, filename) {
@@ -2684,6 +3275,219 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
     showStatus(`Page "${navLabel}" deleted ✓`);
   }
 
+  // ─── Duplicate Page (no AI) ───────────────────────────────────────────────
+  //
+  // Copies an existing page file on disk to a new filename, registers the copy
+  // in the inventory, and adds a nav link. Unlike Add Page (which uses AI to
+  // generate content from a description), Duplicate Page seeds the new page
+  // with the exact content of the source, which the user can then edit.
+
+  // Normalize free-form filename input to a safe on-disk filename:
+  //  - trim, lowercase
+  //  - replace runs of whitespace with single hyphens
+  //  - strip characters outside [a-z0-9-_.]
+  //  - ensure `.html` suffix
+  // Returns null if nothing usable is left after stripping.
+  function sanitizeFilename(raw) {
+    let v = (raw || '').trim().toLowerCase();
+    v = v.replace(/\s+/g, '-').replace(/[^a-z0-9._-]/g, '');
+    // strip any pre-existing .html so we don't end up with foo.html.html
+    v = v.replace(/\.html?$/i, '');
+    if (!v) return null;
+    return v + '.html';
+  }
+
+  // Title-case the filename stem for the new page's <title>. Hyphens and
+  // underscores become spaces; each word's first letter is uppercased.
+  function filenameToTitle(filename) {
+    const stem = filename.replace(/\.html?$/i, '');
+    return stem.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim() || stem;
+  }
+
+  function promptDuplicatePage(sourcePage) {
+    if (!dirHandle) {
+      showStatus('Link your site folder to duplicate pages', true);
+      return;
+    }
+
+    const sourceLabel = sourcePage.navLabel || sourcePage.title || sourcePage.file;
+    const defaultStem = sourcePage.file.replace(/\.html?$/i, '') + '-copy';
+
+    const overlay = el('div', { 'data-editor-ui': '' });
+    css(overlay, {
+      position: 'fixed', inset: '0', background: 'rgba(26, 27, 58, 0.65)',
+      zIndex: '1000000', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontFamily: T.fontBody,
+    });
+
+    const modal = el('div');
+    css(modal, {
+      background: T.bg, borderRadius: T.radius, padding: '30px 32px',
+      width: '480px', maxWidth: '92vw', fontFamily: T.fontBody,
+      boxShadow: T.shadow, position: 'relative', overflow: 'hidden',
+      borderTop: `5px solid ${T.accent2}`,
+    });
+
+    modal.innerHTML = `
+      <h3 style="margin:0 0 6px;font-size:22px;color:${T.primary};font-family:${T.fontHead};font-weight:600;letter-spacing:-0.02em;line-height:1.15">Duplicate <span style="color:${T.accent2};font-style:italic">${escapeHtml(sourceLabel)}</span></h3>
+      <p style="margin:0 0 18px;font-size:13.5px;color:${T.textMuted};line-height:1.55">
+        Creates a copy of <strong style="color:${T.primary}">${escapeHtml(sourcePage.file)}</strong> as a new page with its own nav link.
+      </p>
+      <label style="display:block;margin-bottom:14px;">
+        <span style="display:block;font-size:11px;font-weight:600;color:${T.primary};margin-bottom:5px;letter-spacing:0.04em;text-transform:uppercase;">New filename</span>
+        <input id="__gitqi-dup-fname" type="text" value="${escapeHtml(defaultStem)}" placeholder="services-2"
+          style="width:100%;padding:9px 12px;border:1.5px solid ${T.border};border-radius:${T.radiusSm};
+                 font-size:13.5px;font-family:${T.fontMono};box-sizing:border-box;outline:none;background:#fff;color:${T.primary};
+                 transition:border-color 0.18s ease, box-shadow 0.18s ease;" />
+        <p style="margin:6px 0 0;font-size:11.5px;color:${T.textMuted};">
+          Saves as <span id="__gitqi-dup-preview" style="font-family:${T.fontMono};color:${T.primary}">—</span>. Spaces become hyphens; <code>.html</code> is added automatically.
+        </p>
+      </label>
+      <label style="display:block;margin-bottom:14px;">
+        <span style="display:block;font-size:11px;font-weight:600;color:${T.primary};margin-bottom:5px;letter-spacing:0.04em;text-transform:uppercase;">Navigation label</span>
+        <input id="__gitqi-dup-label" type="text" placeholder="${escapeHtml(sourceLabel)} (copy)"
+          style="width:100%;padding:9px 12px;border:1.5px solid ${T.border};border-radius:${T.radiusSm};
+                 font-size:13.5px;font-family:${T.fontBody};box-sizing:border-box;outline:none;background:#fff;color:${T.primary};
+                 transition:border-color 0.18s ease, box-shadow 0.18s ease;" />
+      </label>
+      <p id="__gitqi-dup-error" style="display:none;margin:0 0 12px;font-size:12.5px;color:${T.danger};"></p>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button id="__gitqi-dup-cancel"
+          style="padding:9px 20px;border:1.5px solid ${T.border};background:transparent;border-radius:${T.radiusPill};
+                 cursor:pointer;font-size:13px;font-family:${T.fontBody};font-weight:500;color:${T.primary};
+                 transition:background 0.18s ease;">Cancel</button>
+        <button id="__gitqi-dup-submit"
+          style="padding:9px 22px;background:${T.accent};color:${T.primary};border:2px solid transparent;
+                 border-radius:${T.radiusPill};cursor:pointer;font-size:13px;font-weight:600;
+                 font-family:${T.fontBody};letter-spacing:-0.005em;box-shadow:${T.shadowCta};
+                 transition:background 0.18s ease, transform 0.18s ease;">Duplicate</button>
+      </div>`;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const fnameInput = modal.querySelector('#__gitqi-dup-fname');
+    const labelInput = modal.querySelector('#__gitqi-dup-label');
+    const previewEl  = modal.querySelector('#__gitqi-dup-preview');
+    const errorEl    = modal.querySelector('#__gitqi-dup-error');
+    const submitBtn  = modal.querySelector('#__gitqi-dup-submit');
+    const cancelBtn  = modal.querySelector('#__gitqi-dup-cancel');
+
+    const updatePreview = () => {
+      const cleaned = sanitizeFilename(fnameInput.value);
+      previewEl.textContent = cleaned || '—';
+    };
+    updatePreview();
+    fnameInput.addEventListener('input', updatePreview);
+    setTimeout(() => { fnameInput.focus(); fnameInput.select(); }, 50);
+
+    const focusRing = (input) => {
+      input.addEventListener('focus', () => {
+        input.style.borderColor = T.accent2;
+        input.style.boxShadow = '0 0 0 3px rgba(45, 212, 191, 0.15)';
+      });
+      input.addEventListener('blur', () => {
+        input.style.borderColor = T.border;
+        input.style.boxShadow = 'none';
+      });
+    };
+    focusRing(fnameInput);
+    focusRing(labelInput);
+    submitBtn.addEventListener('mouseenter', () => { submitBtn.style.background = T.accent2; submitBtn.style.transform = 'translateY(-2px)'; });
+    submitBtn.addEventListener('mouseleave', () => { submitBtn.style.background = T.accent; submitBtn.style.transform = 'translateY(0)'; });
+    cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = T.bgAlt; });
+    cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.background = 'transparent'; });
+
+    let pending = false;
+    cancelBtn.addEventListener('click', () => { if (!pending) overlay.remove(); });
+    modal.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !pending && (e.target === fnameInput || e.target === labelInput)) submitBtn.click();
+    });
+
+    submitBtn.addEventListener('click', async () => {
+      const newFilename = sanitizeFilename(fnameInput.value);
+      if (!newFilename) {
+        errorEl.style.display = 'block';
+        errorEl.textContent = 'Please enter a valid filename (letters, numbers, hyphens).';
+        fnameInput.focus();
+        return;
+      }
+      if (pagesInventory.pages.find(p => p.file === newFilename)) {
+        errorEl.style.display = 'block';
+        errorEl.textContent = `A page named "${newFilename}" already exists.`;
+        fnameInput.focus();
+        return;
+      }
+
+      const navLabel = labelInput.value.trim() || (sourceLabel + ' (copy)');
+      pending = true;
+      submitBtn.disabled = true;
+      cancelBtn.disabled = true;
+      submitBtn.textContent = 'Duplicating…';
+      errorEl.style.display = 'none';
+
+      try {
+        await duplicatePage(sourcePage, newFilename, navLabel);
+        overlay.remove();
+        showStatus(`Page "${navLabel}" duplicated ✓`);
+      } catch (err) {
+        pending = false;
+        submitBtn.disabled = false;
+        cancelBtn.disabled = false;
+        submitBtn.textContent = 'Duplicate';
+        errorEl.style.display = 'block';
+        errorEl.textContent = 'Could not duplicate page: ' + (err.message || err);
+      }
+    });
+  }
+
+  async function duplicatePage(sourcePage, newFilename, navLabel) {
+    snapshotForUndo();
+
+    // Read the source file from disk. For the current page we serialize the live
+    // DOM instead so any unsaved edits make it into the copy — the on-disk file
+    // can lag the in-memory state until the auto-save timer fires.
+    let sourceHTML;
+    if (sourcePage.file === CURRENT_FILENAME) {
+      sourceHTML = serialize({ local: true });
+    } else {
+      const fh = await dirHandle.getFileHandle(sourcePage.file);
+      const file = await fh.getFile();
+      sourceHTML = await file.text();
+    }
+
+    // Rewrite <title> to the new page's title so the copy isn't visually
+    // indistinguishable from its source in the browser tab.
+    const doc = new DOMParser().parseFromString(sourceHTML, 'text/html');
+    const newTitle = filenameToTitle(newFilename);
+    let titleEl = doc.querySelector('title');
+    if (!titleEl) {
+      titleEl = doc.createElement('title');
+      doc.head.prepend(titleEl);
+    }
+    titleEl.textContent = newTitle;
+    const written = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
+
+    await writePageToLocalFile(newFilename, written);
+
+    // Register in inventory
+    pagesInventory.pages.push({ file: newFilename, title: newTitle, navLabel });
+    await savePagesInventory();
+
+    // Add a nav link in the current page's nav. Force-sync to propagate the new
+    // link to every other page (including the freshly-written copy).
+    const currentNav = document.querySelector('nav');
+    if (currentNav) {
+      addLinkToNav(currentNav, navLabel, './' + newFilename);
+      delete currentNav.dataset.gitqiNavBound;
+      activateNav();
+    }
+    lastSyncedSharedSnapshot = '';
+    await syncSharedToOtherPagesIfChanged();
+
+    setDirty(true);
+  }
+
   // ─── Mutation Observer ────────────────────────────────────────────────────
 
   function bindMutationObserver() {
@@ -2719,6 +3523,7 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
     bodyClone.querySelectorAll('[spellcheck]').forEach(n => n.removeAttribute('spellcheck'));
     bodyClone.querySelectorAll('[data-gitqi-bound]').forEach(n => n.removeAttribute('data-gitqi-bound'));
     bodyClone.querySelectorAll('[data-gitqi-nav-bound]').forEach(n => n.removeAttribute('data-gitqi-nav-bound'));
+    bodyClone.querySelectorAll('[data-gitqi-nav-item-bound]').forEach(n => n.removeAttribute('data-gitqi-nav-item-bound'));
     bodyClone.querySelectorAll('[data-gitqi-video-bound]').forEach(n => n.removeAttribute('data-gitqi-video-bound'));
 
     const styleEl = document.querySelector('style');
@@ -2916,12 +3721,21 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
   }
 
   async function handleImageUpload(file, imgEl) {
-    showStatus('Uploading image...');
+    // Capture the pre-swap state so Ctrl+Z brings the original image back.
+    // Asset files written to disk / pushed to GitHub aren't garbage-collected
+    // when the DOM stops referencing them, so an undo simply restores the
+    // earlier <img src> and the asset is still available.
+    snapshotForUndo();
+    showStatus(hasGitHub ? 'Uploading image...' : 'Saving image...');
     try {
       const buffer = await file.arrayBuffer();
-      const b64 = arrayBufferToBase64(buffer);
       const path = `assets/${file.name}`;
-      await github.uploadFile(path, b64);
+
+      if (hasGitHub) {
+        // Push the asset to GitHub so the published site can reference it.
+        const b64 = arrayBufferToBase64(buffer);
+        await github.uploadFile(path, b64);
+      }
 
       if (dirHandle) {
         // Folder is linked — save the image file locally so ./assets/... resolves correctly
@@ -2938,9 +3752,9 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
       imgEl.dataset.gitqiSrc = `./${path}`;
 
       setDirty(true);
-      showStatus('Image uploaded ✓');
+      showStatus(hasGitHub ? 'Image uploaded ✓' : 'Image saved ✓');
     } catch (err) {
-      showStatus('Image upload failed: ' + err.message, true);
+      showStatus((hasGitHub ? 'Image upload failed: ' : 'Image save failed: ') + err.message, true);
     }
   }
 
@@ -3189,6 +4003,7 @@ Return ONLY the complete HTML. No explanation, no markdown fences. Start with <!
         return;
       }
       if (iframe) {
+        snapshotForUndo();
         iframe.setAttribute('src', youtubeEmbedURL(id));
         setDirty(true);
       }
@@ -3812,6 +4627,7 @@ RULES:
     });
     const navClone = clone.querySelector('nav[data-gitqi-nav-bound]');
     if (navClone) navClone.removeAttribute('data-gitqi-nav-bound');
+    clone.querySelectorAll('[data-gitqi-nav-item-bound]').forEach(n => n.removeAttribute('data-gitqi-nav-item-bound'));
 
     // Strip any inline style attribute on <html> — never meaningful output.
     // Older versions also wrote CSS vars here for live preview; cleaned up here
@@ -4663,6 +5479,9 @@ RULES:
     // Close pages panel if open (they occupy the same side-panel slot)
     const pagesPanel = document.getElementById('__gitqi-pages-panel');
     if (pagesPanel) pagesPanel.remove();
+    // Close help panel if open
+    const helpPanel = document.getElementById('__gitqi-help-panel');
+    if (helpPanel) helpPanel.remove();
 
     // Start prewarming the font preview cache. By the time the user opens the
     // font picker, most popular fonts are already rendered; scroll-into-view
@@ -4822,7 +5641,9 @@ RULES:
         uint8.forEach(b => { binary += String.fromCharCode(b); });
         const base64 = btoa(binary);
 
-        await github.uploadFile('assets/favicon.png', base64);
+        if (hasGitHub) {
+          await github.uploadFile('assets/favicon.png', base64);
+        }
 
         if (dirHandle) {
           const fileHandle = await dirHandle.getFileHandle('assets/favicon.png', { create: true })
@@ -5639,6 +6460,7 @@ RULES:
       let container = r.commonAncestorContainer;
       if (container.nodeType === Node.TEXT_NODE) container = container.parentElement;
       const existingCode = container && container.closest('code');
+      snapshotForUndo();
       if (existingCode) {
         const parent = existingCode.parentNode;
         while (existingCode.firstChild) parent.insertBefore(existingCode.firstChild, existingCode);
@@ -5674,7 +6496,10 @@ RULES:
         openLinkPopover(existingLink);
         return;
       }
-      // Wrap selection in a new <a> using a sentinel href, then open the popover
+      // Wrap selection in a new <a> using a sentinel href, then open the popover.
+      // Snapshot before the wrap so Ctrl+Z can both remove the <a> and restore
+      // the original selected text styling.
+      snapshotForUndo();
       document.execCommand('createLink', false, '__gitqi_new__');
       const newLink = document.querySelector('a[href="__gitqi_new__"]');
       if (newLink) {
@@ -5787,6 +6612,10 @@ RULES:
   function wrapSelectionInStyledSpan(property, value) {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+    // One snapshot covers the cleanup-clear AND the wrap that follows.
+    // clearInlineStyleFromSelection is told this is the internal-cleanup call
+    // (onlyIfFullyCovered:true) so it doesn't take its own redundant snapshot.
+    snapshotForUndo();
     clearInlineStyleFromSelection(property, { onlyIfFullyCovered: true });
 
     // Re-acquire the selection — cleanup may have unwrapped spans around it.
@@ -5831,6 +6660,10 @@ RULES:
     const editable = anchor &&
       (anchor.nodeType === Node.TEXT_NODE ? anchor.parentElement : anchor).closest('[data-editable]');
     if (!editable) return false;
+    // Snapshot for explicit clears (Remove color / Clear font / Normal). The
+    // internal cleanup branch (onlyIfFullyCovered:true) skips this since its
+    // caller — wrapSelectionInStyledSpan — already snapshotted.
+    if (!onlyIfFullyCovered) snapshotForUndo();
 
     const candidates = new Set();
     editable.querySelectorAll('span').forEach(s => {
@@ -6429,6 +7262,18 @@ RULES:
     urlInput.value     = link.getAttribute('href') || '';
     blankCheck.checked = link.getAttribute('target') === '_blank';
 
+    // Single snapshot per popover session, taken lazily on the first DOM
+    // mutation. Live-update handlers fire on every keystroke; per-keystroke
+    // snapshotting would burn through the 20-entry undo stack in seconds and
+    // leave the user with no usable history. With one consolidated snapshot,
+    // Ctrl+Z reverts the whole popover-session worth of edits in one step.
+    let popoverSnapshotTaken = false;
+    const maybeSnapshot = () => {
+      if (popoverSnapshotTaken) return;
+      popoverSnapshotTaken = true;
+      snapshotForUndo();
+    };
+
     // Auto-check "Open in new tab" for external URLs the user types/pastes,
     // until they manually toggle the checkbox in this session.
     let blankUserToggled = false;
@@ -6534,6 +7379,7 @@ RULES:
 
       picker.addEventListener('change', () => {
         if (!picker.value) return;
+        maybeSnapshot();
         urlInput.value = picker.value;
         link.setAttribute('href', picker.value);
         refreshGotoBtn();
@@ -6550,10 +7396,12 @@ RULES:
 
     // Live updates
     textInput.addEventListener('input', () => {
+      maybeSnapshot();
       link.textContent = textInput.value;
       setDirty(true);
     });
     urlInput.addEventListener('input', () => {
+      maybeSnapshot();
       link.setAttribute('href', urlInput.value);
       refreshGotoBtn();
       if (!suppressUrlSync) syncMailtoFromUrl();
@@ -6565,6 +7413,7 @@ RULES:
       setDirty(true);
     });
     function rebuildMailtoUrl() {
+      maybeSnapshot();
       const parsed = parseMailto(urlInput.value);
       const next = buildMailto({
         address: parsed.address,
@@ -6581,6 +7430,7 @@ RULES:
     subjectInput.addEventListener('input', rebuildMailtoUrl);
     bodyInput.addEventListener('input', rebuildMailtoUrl);
     blankCheck.addEventListener('change', () => {
+      maybeSnapshot();
       blankUserToggled = true;
       if (blankCheck.checked) {
         link.setAttribute('target', '_blank');
@@ -6607,9 +7457,42 @@ RULES:
     removeBtn.addEventListener('mouseenter', () => { removeBtn.style.background = T.accent4; removeBtn.style.color = '#fff'; removeBtn.style.borderColor = 'transparent'; });
     removeBtn.addEventListener('mouseleave', () => { removeBtn.style.background = 'transparent'; removeBtn.style.color = T.textMuted; removeBtn.style.borderColor = T.border; });
     removeBtn.addEventListener('click', () => {
-      // Unwrap: replace <a> with its text content
-      const text = document.createTextNode(link.textContent);
-      link.replaceWith(text);
+      // Always undoable — removing a styled CTA without an undo path means the
+      // user has no way back to the original element if they regret the click.
+      snapshotForUndo();
+
+      const inNav = !!link.closest('nav');
+      const editableHost = link.closest('[contenteditable="true"]');
+
+      if (inNav) {
+        // Drop the wrapping <li> (or the link itself in a flat nav). Leaving
+        // an empty <li> behind forces a follow-up empty-tag delete that the
+        // user wouldn't expect for "Remove link".
+        const href = (link.getAttribute('href') || '');
+        if (hrefMatchesFilename(href, CURRENT_FILENAME)) {
+          showStatus("Removed the current page's nav link — you may want to add it back", true);
+        }
+        const li = link.closest('li');
+        if (li && li.closest('nav') === link.closest('nav')) {
+          li.remove();
+        } else {
+          link.remove();
+        }
+        lastSyncedSharedSnapshot = ''; // nav changed structurally — re-sync
+      } else if (editableHost) {
+        // Inside a [data-editable] / contenteditable region: unwrap to text so
+        // the surrounding sentence keeps flowing. The text remains selectable
+        // and can be re-linked via the selection toolbar's 🔗 button.
+        const text = document.createTextNode(link.textContent);
+        link.replaceWith(text);
+      } else {
+        // Outside any editable region — typically a styled CTA/button. The
+        // link IS the element from the user's perspective; unwrapping to a
+        // bare text node would leave un-editable, un-re-linkable text in a
+        // structural wrapper. Removing the whole element matches "delete this
+        // button" intent.
+        link.remove();
+      }
       setDirty(true);
       closeLinkPopover();
     });
