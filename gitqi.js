@@ -120,6 +120,35 @@
 
   // ─── Toolbar ──────────────────────────────────────────────────────────────
 
+  function makeIconButton(text, titleAttr) {
+    const btn = el('button', { 'data-editor-ui': '' });
+    btn.textContent = text;
+    btn.title = titleAttr;
+    css(btn, {
+      width: '26px', height: '26px', padding: '0',
+      marginLeft: '4px',
+      border: '1.5px solid rgba(253, 251, 245, 0.4)',
+      borderRadius: '50%',
+      background: 'transparent',
+      color: T.bg,
+      cursor: 'pointer',
+      fontSize: '13px',
+      fontWeight: '600',
+      fontFamily: T.fontBody,
+      lineHeight: '1',
+      transition: 'background 0.18s ease, border-color 0.18s ease',
+    });
+    btn.addEventListener('mouseenter', () => {
+      btn.style.background = 'rgba(253, 251, 245, 0.15)';
+      btn.style.borderColor = T.accent3;
+    });
+    btn.addEventListener('mouseleave', () => {
+      btn.style.background = 'transparent';
+      btn.style.borderColor = 'rgba(253, 251, 245, 0.4)';
+    });
+    return btn;
+  }
+
   function injectToolbar() {
     const bar = el('div', {
       id: '__gitqi-toolbar',
@@ -210,38 +239,20 @@
     exportBtn.addEventListener('click', exportToFile);
     if (publishBtn) publishBtn.addEventListener('click', publishSite);
 
+    // Site-wide utilities. Houses one-time operations (folder relink, page
+    // init, asset cleanup) so the routine panels stay focused on the
+    // day-to-day edits.
+    const gearBtn = makeIconButton('⚙', 'Site utilities');
+    gearBtn.addEventListener('click', openGearPanel);
+
     // Help "?" icon: a small circular button always present at the right edge.
     // Opens a side panel describing capabilities + degraded-mode notice.
-    const helpBtn = el('button', { 'data-editor-ui': '' });
-    helpBtn.textContent = '?';
-    helpBtn.title = 'GitQi help & capabilities';
-    css(helpBtn, {
-      width: '26px', height: '26px', padding: '0',
-      marginLeft: '4px',
-      border: '1.5px solid rgba(253, 251, 245, 0.4)',
-      borderRadius: '50%',
-      background: 'transparent',
-      color: T.bg,
-      cursor: 'pointer',
-      fontSize: '13px',
-      fontWeight: '600',
-      fontFamily: T.fontBody,
-      lineHeight: '1',
-      transition: 'background 0.18s ease, border-color 0.18s ease',
-    });
-    helpBtn.addEventListener('mouseenter', () => {
-      helpBtn.style.background = 'rgba(253, 251, 245, 0.15)';
-      helpBtn.style.borderColor = T.accent3;
-    });
-    helpBtn.addEventListener('mouseleave', () => {
-      helpBtn.style.background = 'transparent';
-      helpBtn.style.borderColor = 'rgba(253, 251, 245, 0.4)';
-    });
+    const helpBtn = makeIconButton('?', 'GitQi help & capabilities');
     helpBtn.addEventListener('click', openHelpPanel);
 
     const toolbarChildren = [logo, title, spacer, status, undoBtn, redoBtn, syncBtn, pagesBtn, themeBtn, exportBtn];
     if (publishBtn) toolbarChildren.push(publishBtn);
-    toolbarChildren.push(helpBtn);
+    toolbarChildren.push(gearBtn, helpBtn);
     bar.append(...toolbarChildren);
     document.body.prepend(bar);
 
@@ -2467,6 +2478,608 @@ RULES:
     return wrap;
   }
 
+  // The Pages / Theme / Help / Gear panels all occupy the same right-edge slot.
+  // Whichever opens next closes the others to keep one side panel visible at a
+  // time. Pass the id of the panel you're about to open so it isn't dismissed.
+  const SIDE_PANEL_IDS = [
+    '__gitqi-pages-panel',
+    '__gitqi-theme-panel',
+    '__gitqi-help-panel',
+    '__gitqi-gear-panel',
+  ];
+  function closeSidePanels(exceptId) {
+    SIDE_PANEL_IDS.forEach(id => {
+      if (id === exceptId) return;
+      const p = document.getElementById(id);
+      if (p) p.remove();
+    });
+  }
+
+  // ─── Page Init Scanner ────────────────────────────────────────────────────
+  //
+  // Walks a DOM root and injects the data-* markers GitQi needs to manage
+  // content: data-zone on semantic containers, data-editable on text blocks,
+  // data-editable-video around YouTube iframes. Idempotent — anything already
+  // tagged is left alone. Intentionally conservative: only recognises a fixed
+  // allowlist of zone tags (no div-sniffing magic) so re-runs are predictable
+  // and the user can rely on rational page structure determining the outcome.
+  //
+  // Returns a stats object so the caller can surface "tagged N zones, M
+  // editables" without re-scanning. Operates on whatever root is passed (live
+  // document.body for in-DOM init; a parsed disk document for batch import).
+
+  const INIT_ZONE_TAGS = ['section', 'header', 'footer', 'main', 'article'];
+  const INIT_EDITABLE_TAGS = ['h1','h2','h3','h4','h5','h6','p','li','a'];
+  // Block-ish children that disqualify a candidate editable from being marked.
+  // Tagging a <p> that contains a <div> as contenteditable would let the user
+  // type inside the nested block and produce structurally broken HTML.
+  const INIT_BLOCK_CHILD_TAGS = new Set(['DIV','SECTION','HEADER','FOOTER','MAIN','ARTICLE','UL','OL','P','H1','H2','H3','H4','H5','H6','TABLE','FORM','NAV','FIGURE','BLOCKQUOTE']);
+
+  function initSlugify(text) {
+    return (text || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]+/g, '')
+      .trim()
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 48);
+  }
+
+  // Pick the slug for a candidate zone in priority order:
+  //   1. existing id (already meaningful to the page)
+  //   2. canonical name for header/footer/main (one of each typically)
+  //   3. first heading text inside the zone
+  //   4. tag name + numeric fallback
+  // Uniqueness is enforced against the same root the scanner is operating on,
+  // not document — so parsing a disk doc doesn't collide with live page slugs.
+  function pickZoneSlug(zone, root, taken) {
+    if (zone.id && !taken.has(zone.id)) return zone.id;
+    const tag = zone.tagName.toLowerCase();
+    const candidates = [];
+    if (zone.id) candidates.push(zone.id);
+    if (tag === 'header' || tag === 'footer' || tag === 'main') candidates.push(tag);
+    const heading = zone.querySelector('h1,h2,h3,h4,h5,h6');
+    if (heading) {
+      const slug = initSlugify(heading.textContent);
+      if (slug) candidates.push(slug);
+    }
+    candidates.push(tag); // last-resort base for the section-N walk
+    for (const base of candidates) {
+      if (!base) continue;
+      if (!taken.has(base)) return base;
+      // Walk -2, -3, … until free
+      let n = 2;
+      while (taken.has(base + '-' + n)) n++;
+      return base + '-' + n;
+    }
+    return 'section';
+  }
+
+  // Innermost-wins: if a candidate contains another candidate, the outer one
+  // is skipped (a <main> wrapping <section>s yields the sections as zones,
+  // not the main). Keeps zones at the natural editing granularity.
+  function selectInnermostZones(root) {
+    const all = Array.from(root.querySelectorAll(INIT_ZONE_TAGS.join(',')));
+    return all.filter(c => !all.some(other => other !== c && c.contains(other)));
+  }
+
+  function isInsideNav(el, scope) {
+    let p = el.parentElement;
+    while (p && p !== scope) {
+      if (p.tagName === 'NAV') return true;
+      p = p.parentElement;
+    }
+    return false;
+  }
+
+  function hasEditableAncestor(el, scope) {
+    let p = el.parentElement;
+    while (p && p !== scope) {
+      if (p.hasAttribute('data-editable')) return true;
+      p = p.parentElement;
+    }
+    return false;
+  }
+
+  function hasBlockChild(el) {
+    for (const child of el.children) {
+      if (INIT_BLOCK_CHILD_TAGS.has(child.tagName)) return true;
+    }
+    return false;
+  }
+
+  // <a> only gets a marker if it's standalone text (no img/iframe/block child).
+  // Anchors wrapping images are handled by the link popover via click intercept;
+  // tagging the <a> as contenteditable would let users type around the image
+  // and corrupt the markup.
+  function isAnchorEditableCandidate(a) {
+    if (!a.textContent.trim()) return false;
+    for (const child of a.children) {
+      if (child.tagName === 'IMG' || child.tagName === 'IFRAME' || child.tagName === 'SVG') return false;
+      if (INIT_BLOCK_CHILD_TAGS.has(child.tagName)) return false;
+    }
+    return true;
+  }
+
+  function tagEditablesInZone(zone, stats) {
+    zone.querySelectorAll(INIT_EDITABLE_TAGS.join(',')).forEach(node => {
+      if (node.hasAttribute('data-editable')) return;
+      if (node.closest('[data-editor-ui]')) return;
+      if (isInsideNav(node, zone)) return;                  // nav has its own handlers
+      if (node.closest('[data-editable-video]')) return;    // links inside video wrappers stay alone
+      if (hasEditableAncestor(node, zone)) return;          // parent already covers this text
+      if (node.tagName === 'A') {
+        if (!isAnchorEditableCandidate(node)) return;
+      } else if (hasBlockChild(node)) {
+        return; // can't safely make contenteditable a container with block children
+      }
+      node.setAttribute('data-editable', '');
+      stats.editablesAdded++;
+    });
+  }
+
+  function tagImagesInZone(zone, stats) {
+    zone.querySelectorAll('img').forEach(img => {
+      if (img.closest('[data-editor-ui]')) return;
+      if (img.hasAttribute('data-editable-image')) return;
+      img.setAttribute('data-editable-image', '');
+      stats.imagesAdded++;
+    });
+  }
+
+  // Wrap unwrapped YouTube iframes in a [data-editable-video] container.
+  // If the iframe's parent already looks like a single-purpose wrapper (only
+  // child, not the zone itself), promote the parent rather than introduce a
+  // new layout element — preserves the page's existing aspect-ratio styles.
+  function wrapVideosInZone(zone, stats) {
+    zone.querySelectorAll('iframe').forEach(iframe => {
+      if (iframe.closest('[data-editable-video]')) return;
+      if (iframe.closest('[data-editor-ui]')) return;
+      const src = iframe.getAttribute('src') || '';
+      if (!/youtube\.com\/embed\/|youtu\.be\/|youtube\.com\/watch/i.test(src)) return;
+
+      const parent = iframe.parentElement;
+      if (parent && parent !== zone && parent.children.length === 1 && parent.tagName === 'DIV') {
+        parent.setAttribute('data-editable-video', '');
+      } else {
+        const doc = iframe.ownerDocument || document;
+        const wrapper = doc.createElement('div');
+        wrapper.setAttribute('data-editable-video', '');
+        wrapper.style.position = 'relative';
+        wrapper.style.paddingBottom = '56.25%';
+        wrapper.style.height = '0';
+        wrapper.style.overflow = 'hidden';
+        iframe.parentNode.insertBefore(wrapper, iframe);
+        wrapper.appendChild(iframe);
+        iframe.style.position = 'absolute';
+        iframe.style.inset = '0';
+        iframe.style.width = '100%';
+        iframe.style.height = '100%';
+      }
+      stats.videosAdded++;
+    });
+  }
+
+  // Walks `rootEl` and tags zones / editables / images / videos in place.
+  // Pass document.body for live init; pass a parsed disk doc's body for batch
+  // import in stage 4. Does NOT call activateZones / activateNav — the caller
+  // re-activates the surface (live DOM) or writes the doc back to disk.
+  function initializePageContent(rootEl) {
+    const stats = { zonesAdded: 0, editablesAdded: 0, imagesAdded: 0, videosAdded: 0, zonesSkipped: 0 };
+    const root = rootEl || document.body;
+
+    const zones = selectInnermostZones(root);
+    const taken = new Set(
+      Array.from(root.querySelectorAll('[data-zone]')).map(z => z.getAttribute('data-zone'))
+    );
+
+    zones.forEach(zone => {
+      if (!zone.hasAttribute('data-zone')) {
+        const slug = pickZoneSlug(zone, root, taken);
+        zone.setAttribute('data-zone', slug);
+        taken.add(slug);
+        if (!zone.id) zone.id = slug;
+        stats.zonesAdded++;
+      } else {
+        stats.zonesSkipped++;
+      }
+      tagEditablesInZone(zone, stats);
+      tagImagesInZone(zone, stats);
+      wrapVideosInZone(zone, stats);
+    });
+
+    return stats;
+  }
+
+  // Format stats into a status message. Returns null when nothing was tagged.
+  function formatInitStats(stats) {
+    const total = stats.zonesAdded + stats.editablesAdded + stats.imagesAdded + stats.videosAdded;
+    if (total === 0) return null;
+    const parts = [];
+    if (stats.zonesAdded) parts.push(`${stats.zonesAdded} zone${stats.zonesAdded === 1 ? '' : 's'}`);
+    if (stats.editablesAdded) parts.push(`${stats.editablesAdded} editable${stats.editablesAdded === 1 ? '' : 's'}`);
+    if (stats.imagesAdded) parts.push(`${stats.imagesAdded} image${stats.imagesAdded === 1 ? '' : 's'}`);
+    if (stats.videosAdded) parts.push(`${stats.videosAdded} video${stats.videosAdded === 1 ? '' : 's'}`);
+    return parts.join(', ');
+  }
+
+  // Disk path used by the Pages panel for any page that isn't the active one.
+  // Read file → parse → scan → serialize → write. Skip the write when nothing
+  // changed so a re-init on an already-tagged file doesn't rewrite bytes (and
+  // doesn't appear in git as a no-op change). Returns the same stats shape as
+  // initializePageContent for the caller's status surfacing.
+  async function initPageOnDisk(page) {
+    if (!dirHandle) throw new Error('no folder access');
+    const fh = await dirHandle.getFileHandle(page.file);
+    const file = await fh.getFile();
+    const sourceHTML = await file.text();
+    const doc = new DOMParser().parseFromString(sourceHTML, 'text/html');
+    const stats = initializePageContent(doc.body);
+    if (stats.zonesAdded + stats.editablesAdded + stats.imagesAdded + stats.videosAdded === 0) {
+      return stats;
+    }
+    const written = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
+    await writePageToLocalFile(page.file, written);
+    return stats;
+  }
+
+  // Pages-panel per-page entry point. Routes the current page through the live
+  // path (so re-activation + dirty bit fire) and any other page through the
+  // disk path. Status messages name the page so the user knows which file was
+  // touched when init was triggered from the panel.
+  async function runInitForPage(page) {
+    if (page.file === CURRENT_FILENAME) {
+      runInitOnCurrentPage();
+      return;
+    }
+    if (!dirHandle) {
+      showStatus('Link your site folder to init other pages', true);
+      return;
+    }
+    try {
+      const stats = await initPageOnDisk(page);
+      const summary = formatInitStats(stats);
+      if (summary) {
+        showStatus(`Init ${page.file}: tagged ${summary} ✓`);
+      } else {
+        showStatus(`${page.file} is already up to date`);
+      }
+    } catch (e) {
+      showStatus(`Init ${page.file} failed: ${e.message || e}`, true);
+    }
+  }
+
+  // Live-DOM entry point used by the gear menu. Snapshots first so the whole
+  // tagging pass is undoable in one step, re-activates zones + nav so the new
+  // markers wire up controls immediately, then marks dirty so auto-save writes
+  // the result to disk.
+  function runInitOnCurrentPage() {
+    snapshotForUndo();
+    const stats = initializePageContent(document.body);
+    const summary = formatInitStats(stats);
+    if (!summary) {
+      showStatus('Nothing new to init — page is already managed');
+      return;
+    }
+    activateZones();
+    activateNav();
+    setDirty(true);
+    showStatus(`Init tagged ${summary} ✓`);
+  }
+
+  // ─── Gear / Site Utilities Panel ──────────────────────────────────────────
+  //
+  // Houses one-time site operations that don't belong in the routine
+  // Theme / Pages / Help panels: capability + folder status, re-linking the
+  // local folder, Page setup (init), and Maintenance (unused-asset cleanup).
+  // Mutually exclusive with the other side panels.
+
+  function openGearPanel() {
+    const existing = document.getElementById('__gitqi-gear-panel');
+    if (existing) { existing.remove(); return; }
+    closeSidePanels('__gitqi-gear-panel');
+
+    const panel = el('div', { id: '__gitqi-gear-panel', 'data-editor-ui': '' });
+    css(panel, {
+      position: 'fixed',
+      top: '44px',
+      right: '0',
+      bottom: '0',
+      width: '320px',
+      background: T.bg,
+      borderLeft: `1px solid ${T.border}`,
+      zIndex: '999998',
+      overflowY: 'auto',
+      fontFamily: T.fontBody,
+      fontSize: '13px',
+      boxShadow: '-8px 0 28px -8px rgba(26, 27, 58, 0.18)',
+      color: T.primary,
+    });
+
+    const header = el('div');
+    css(header, {
+      padding: '16px 18px 14px',
+      borderBottom: `1px solid ${T.borderSoft}`,
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      position: 'sticky',
+      top: '0',
+      background: T.bg,
+      zIndex: '1',
+    });
+    header.innerHTML = `<strong style="font-size:17px;color:${T.primary};font-family:${T.fontHead};font-weight:600;letter-spacing:-0.015em;">Site Utilities</strong>
+      <button id="__gitqi-gear-close" style="background:none;border:none;cursor:pointer;font-size:20px;color:${T.textMuted};line-height:1;padding:0 4px;transition:color 0.15s;">&times;</button>`;
+    const closeBtn = header.querySelector('#__gitqi-gear-close');
+    closeBtn.addEventListener('mouseenter', () => { closeBtn.style.color = T.primary; });
+    closeBtn.addEventListener('mouseleave', () => { closeBtn.style.color = T.textMuted; });
+    closeBtn.addEventListener('click', () => panel.remove());
+
+    const content = el('div');
+    css(content, { padding: '14px 18px 28px' });
+
+    // ── Status section: folder + capability flags ─────────────────────────
+    const statusSection = el('div');
+    css(statusSection, { marginBottom: '22px', paddingBottom: '22px', borderBottom: `1px solid ${T.borderSoft}` });
+
+    const statusLabel = el('div');
+    statusLabel.textContent = 'Status';
+    css(statusLabel, { fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.1em', color: T.textMuted, marginBottom: '10px' });
+
+    const folderPathText = dirHandle
+      ? (dirHandle.name || 'Linked')
+      : 'Not linked';
+    const statusRow = (label, value, ok) => `
+      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:4px 0;font-size:12.5px;gap:10px;">
+        <span style="color:${T.textMuted};flex-shrink:0;">${label}</span>
+        <span style="color:${ok ? T.primary : T.textMuted};text-align:right;word-break:break-all;">
+          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${ok ? T.success : T.danger};margin-right:6px;vertical-align:middle;"></span>${value}
+        </span>
+      </div>`;
+    const statusList = el('div');
+    statusList.innerHTML =
+      statusRow('Folder', folderPathText, !!dirHandle) +
+      statusRow('GitHub', hasGitHub ? (repo || 'configured') : 'not configured', hasGitHub) +
+      statusRow('Gemini', hasGemini ? 'configured' : 'not configured', hasGemini);
+
+    const relinkBtn = el('button');
+    relinkBtn.textContent = dirHandle ? '📁 Re-link folder' : '📁 Link folder';
+    css(relinkBtn, {
+      width: '100%',
+      marginTop: '12px',
+      padding: '9px 12px',
+      background: T.bgAlt,
+      color: T.primary,
+      border: `1.5px solid ${T.borderSoft}`,
+      borderRadius: T.radiusPill,
+      cursor: 'pointer',
+      fontSize: '12.5px',
+      fontFamily: T.fontBody,
+      fontWeight: '500',
+      letterSpacing: '-0.005em',
+      transition: 'background 0.18s ease, border-color 0.18s ease',
+    });
+    relinkBtn.title = dirHandle
+      ? 'Pick a different site folder, or re-grant access to the current one'
+      : 'Pick the site folder GitQi should save edits to';
+    relinkBtn.addEventListener('mouseenter', () => { relinkBtn.style.background = T.accent3; relinkBtn.style.borderColor = 'transparent'; });
+    relinkBtn.addEventListener('mouseleave', () => { relinkBtn.style.background = T.bgAlt; relinkBtn.style.borderColor = T.borderSoft; });
+    relinkBtn.addEventListener('click', () => { panel.remove(); promptRelinkFolder(); });
+
+    const relinkHint = el('div');
+    relinkHint.textContent = dirHandle
+      ? 'Use this if you moved the folder, or want GitQi to manage a different folder.'
+      : 'Link the folder containing your HTML files so GitQi can save edits.';
+    css(relinkHint, { fontSize: '11px', color: T.textMuted, marginTop: '6px', lineHeight: '1.45' });
+
+    statusSection.append(statusLabel, statusList, relinkBtn, relinkHint);
+
+    // ── Page setup: init scanner ───────────────────────────────────────────
+    // Tag the current live DOM with the data-* markers GitQi needs. Safe to
+    // re-run any time — picks up new content the user pasted in by hand.
+    const initSection = el('div');
+    css(initSection, { marginBottom: '22px', paddingBottom: '22px', borderBottom: `1px solid ${T.borderSoft}` });
+
+    const initLabel = el('div');
+    initLabel.textContent = 'Page setup';
+    css(initLabel, { fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.1em', color: T.textMuted, marginBottom: '10px' });
+
+    const initBtn = el('button');
+    initBtn.textContent = '✨ Init this page';
+    css(initBtn, {
+      width: '100%',
+      padding: '9px 12px',
+      background: T.bgAlt,
+      color: T.primary,
+      border: `1.5px solid ${T.borderSoft}`,
+      borderRadius: T.radiusPill,
+      cursor: 'pointer',
+      fontSize: '12.5px',
+      fontFamily: T.fontBody,
+      fontWeight: '500',
+      letterSpacing: '-0.005em',
+      transition: 'background 0.18s ease, border-color 0.18s ease',
+    });
+    initBtn.title = 'Scan the current page and tag sections, headings, paragraphs, images, and videos so GitQi can edit them';
+    initBtn.addEventListener('mouseenter', () => { initBtn.style.background = T.accent3; initBtn.style.borderColor = 'transparent'; });
+    initBtn.addEventListener('mouseleave', () => { initBtn.style.background = T.bgAlt; initBtn.style.borderColor = T.borderSoft; });
+    initBtn.addEventListener('click', () => { panel.remove(); runInitOnCurrentPage(); });
+
+    const initHint = el('div');
+    initHint.innerHTML = 'Tags <code style="font-family:' + T.fontMono + ';font-size:11px;background:' + T.bgAlt + ';padding:1px 4px;border-radius:3px;">&lt;section&gt;</code>, <code style="font-family:' + T.fontMono + ';font-size:11px;background:' + T.bgAlt + ';padding:1px 4px;border-radius:3px;">&lt;header&gt;</code>, <code style="font-family:' + T.fontMono + ';font-size:11px;background:' + T.bgAlt + ';padding:1px 4px;border-radius:3px;">&lt;footer&gt;</code>, headings, paragraphs, lists, images, and YouTube embeds. Idempotent — re-run any time to pick up new content.';
+    css(initHint, { fontSize: '11px', color: T.textMuted, marginTop: '6px', lineHeight: '1.55' });
+
+    initSection.append(initLabel, initBtn, initHint);
+
+    // ── Maintenance section: unused-asset cleanup ─────────────────────────
+    const maintSection = el('div');
+    css(maintSection, { marginBottom: '6px' });
+
+    const maintLabel = el('div');
+    maintLabel.textContent = 'Maintenance';
+    css(maintLabel, { fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.1em', color: T.textMuted, marginBottom: '10px' });
+
+    const cleanupBtn = el('button');
+    cleanupBtn.textContent = '🧹 Clean up unused assets';
+    css(cleanupBtn, {
+      width: '100%',
+      padding: '9px 12px',
+      background: T.bgAlt,
+      color: dirHandle ? T.primary : T.textMuted,
+      border: `1.5px solid ${T.borderSoft}`,
+      borderRadius: T.radiusPill,
+      cursor: dirHandle ? 'pointer' : 'not-allowed',
+      fontSize: '12.5px',
+      fontFamily: T.fontBody,
+      fontWeight: '500',
+      letterSpacing: '-0.005em',
+      transition: 'background 0.18s ease, border-color 0.18s ease',
+    });
+    cleanupBtn.title = dirHandle
+      ? 'Find and delete files in assets/ that nothing on the site references'
+      : 'Link your site folder first';
+    cleanupBtn.disabled = !dirHandle;
+    if (dirHandle) {
+      cleanupBtn.addEventListener('mouseenter', () => { cleanupBtn.style.background = T.accent3; cleanupBtn.style.borderColor = 'transparent'; });
+      cleanupBtn.addEventListener('mouseleave', () => { cleanupBtn.style.background = T.bgAlt; cleanupBtn.style.borderColor = T.borderSoft; });
+      cleanupBtn.addEventListener('click', () => { panel.remove(); promptAssetCleanup(); });
+    }
+
+    const cleanupHint = el('div');
+    cleanupHint.textContent = 'Shows a preview before anything is deleted.';
+    css(cleanupHint, { fontSize: '11px', color: T.textMuted, marginTop: '6px', lineHeight: '1.45' });
+
+    maintSection.append(maintLabel, cleanupBtn, cleanupHint);
+
+    content.append(statusSection, initSection, maintSection);
+    panel.append(header, content);
+    document.body.appendChild(panel);
+  }
+
+  // Re-prompt the user for a folder via a confirm-style modal that mirrors the
+  // initial folder-access banner. Dismissable (unlike `showAccessBanner` which
+  // is blocking) since the user already has a working link; this flow is for
+  // moving to a different folder or re-granting permission. On confirm:
+  // replaces the stored handle, refreshes pages inventory, resets the shared
+  // snapshot so the next save doesn't try to sync stale state into the new
+  // folder.
+  function promptRelinkFolder() {
+    if (document.getElementById('__gitqi-relink-modal')) return;
+
+    const overlay = el('div', { id: '__gitqi-relink-modal', 'data-editor-ui': '' });
+    css(overlay, {
+      position: 'fixed',
+      inset: '0',
+      zIndex: '9999999',
+      background: 'rgba(26, 27, 58, 0.65)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      fontFamily: T.fontBody,
+      padding: '20px',
+      boxSizing: 'border-box',
+    });
+
+    const hintPath = location.protocol === 'file:'
+      ? decodeURIComponent(location.pathname.substring(0, location.pathname.lastIndexOf('/')))
+      : null;
+    const currentName = dirHandle ? dirHandle.name : null;
+
+    const modal = el('div');
+    css(modal, {
+      background: T.bg,
+      borderRadius: T.radius,
+      padding: '34px 36px 26px',
+      maxWidth: '500px',
+      width: '100%',
+      textAlign: 'center',
+      boxShadow: T.shadow,
+      boxSizing: 'border-box',
+      fontFamily: T.fontBody,
+      position: 'relative',
+      overflow: 'hidden',
+    });
+
+    const currentBlock = currentName
+      ? `<div style="margin-top:14px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:${T.textMuted};text-align:left;">Currently linked</div>
+         <div style="margin-top:4px;background:${T.bgAlt};padding:10px 14px;border-radius:${T.radiusSm};font-family:${T.fontMono};font-size:12px;color:${T.primary};word-break:break-all;border:1px solid ${T.borderSoft};text-align:left;">📁 ${escapeHtml(currentName)}</div>`
+      : '';
+    const hintBlock = hintPath
+      ? `<div style="margin-top:14px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:${T.textMuted};text-align:left;">This page lives in</div>
+         <div style="margin-top:4px;background:${T.bgAlt};padding:10px 14px;border-radius:${T.radiusSm};font-family:${T.fontMono};font-size:12px;color:${T.primary};word-break:break-all;border:1px solid ${T.borderSoft};text-align:left;">${escapeHtml(hintPath)}</div>`
+      : '';
+
+    modal.innerHTML = `
+      <div style="position:absolute;top:0;left:0;right:0;height:5px;background:linear-gradient(90deg, ${T.accent}, ${T.secondary} 50%, ${T.accent2});"></div>
+      <div style="font-size:38px;margin-bottom:12px;">📁</div>
+      <h2 style="margin:0 0 10px;font-size:22px;color:${T.primary};font-family:${T.fontHead};font-weight:600;letter-spacing:-0.02em;line-height:1.15;">Re-link site folder</h2>
+      <p style="margin:0;font-size:14px;color:${T.textMuted};line-height:1.6;">
+        Pick the folder GitQi should save edits to. The browser will open a folder picker — choose the directory
+        that contains your <code style="font-family:${T.fontMono};font-size:12px;background:${T.bgAlt};padding:1px 5px;border-radius:3px;color:${T.primary};">.html</code> files.
+      </p>
+      ${currentBlock}
+      ${hintBlock}
+      <p style="margin:18px 0 0;font-size:12.5px;color:${T.textMuted};line-height:1.55;text-align:left;">
+        After you pick a folder, GitQi will refresh the pages inventory from disk and resume auto-save against the new location.
+        Your old folder is left untouched — nothing is moved or deleted.
+      </p>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:22px;">
+        <button id="__gitqi-relink-cancel"
+          style="padding:9px 20px;border:1.5px solid ${T.border};background:transparent;border-radius:${T.radiusPill};
+                 cursor:pointer;font-size:13px;font-family:${T.fontBody};font-weight:500;color:${T.primary};
+                 transition:background 0.18s ease;">Cancel</button>
+        <button id="__gitqi-relink-pick"
+          style="padding:9px 22px;background:${T.accent};color:${T.primary};border:2px solid transparent;font-weight:600;
+                 border-radius:${T.radiusPill};cursor:pointer;font-size:13px;font-family:${T.fontBody};
+                 box-shadow:${T.shadowCta};letter-spacing:-0.005em;
+                 transition:transform 0.2s ease, background 0.2s ease;">Select Folder</button>
+      </div>
+      <div id="__gitqi-relink-error" style="margin-top:12px;font-size:12.5px;color:${T.danger};min-height:16px;text-align:right;"></div>
+    `;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const errEl = modal.querySelector('#__gitqi-relink-error');
+    const cancelBtn = modal.querySelector('#__gitqi-relink-cancel');
+    const pickBtn = modal.querySelector('#__gitqi-relink-pick');
+
+    cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.background = T.bgAlt; });
+    cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.background = 'transparent'; });
+    pickBtn.addEventListener('mouseenter', () => { pickBtn.style.background = T.accent2; pickBtn.style.transform = 'translateY(-2px)'; });
+    pickBtn.addEventListener('mouseleave', () => { pickBtn.style.background = T.accent; pickBtn.style.transform = 'translateY(0)'; });
+
+    let pending = false;
+    const dismiss = () => { if (!pending) overlay.remove(); };
+    cancelBtn.addEventListener('click', dismiss);
+    overlay.addEventListener('click', e => { if (e.target === overlay) dismiss(); });
+
+    pickBtn.addEventListener('click', async () => {
+      errEl.textContent = '';
+      pending = true;
+      try {
+        const handle = await window.showDirectoryPicker({ mode: 'readwrite', startIn: 'documents' });
+        if (!(await verifyPermission(handle))) {
+          errEl.textContent = 'Write permission was not granted. Please try again.';
+          pending = false;
+          return;
+        }
+        dirHandle = handle;
+        await storeHandleInDB(handle);
+        pagesInventory = null;
+        await loadPagesInventory();
+        lastSyncedSharedSnapshot = getSharedSnapshot();
+        await writeCurrentPageToLocalFile();
+        overlay.remove();
+        showStatus(`Folder re-linked to ${handle.name} ✓`);
+      } catch (e) {
+        pending = false;
+        if (e.name === 'AbortError') return; // user cancelled the picker — keep the modal open
+        errEl.textContent = e.message || 'Could not access folder';
+      }
+    });
+  }
+
   // ─── Help Panel ───────────────────────────────────────────────────────────
   //
   // Always-available reference: keyboard shortcuts, capability summary, and a
@@ -2478,10 +3091,7 @@ RULES:
     if (existing) { existing.remove(); return; }
 
     // Close other side panels so we don't stack
-    const pagesPanel = document.getElementById('__gitqi-pages-panel');
-    if (pagesPanel) pagesPanel.remove();
-    const themePanel = document.getElementById('__gitqi-theme-panel');
-    if (themePanel) themePanel.remove();
+    closeSidePanels('__gitqi-help-panel');
 
     const panel = el('div', { id: '__gitqi-help-panel', 'data-editor-ui': '' });
     css(panel, {
@@ -2545,6 +3155,7 @@ RULES:
           <li>Click <strong>⟲</strong> to push nav + footer + theme to every other page</li>
           <li>Use the <strong>Pages</strong> panel to open, duplicate, or delete pages</li>
           <li>Use the <strong>Theme</strong> panel to change colors, fonts, spacing, and favicon</li>
+          <li>Open <strong>⚙ Site Utilities</strong> for folder re-link and asset cleanup</li>
         </ul>
 
         <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:${T.textMuted};margin-bottom:8px;">Keyboard shortcuts</div>
@@ -2577,16 +3188,37 @@ RULES:
 
   // ─── Pages Manager ────────────────────────────────────────────────────────
 
+  // Small circular icon button used for per-row actions in the Pages panel
+  // (Duplicate, Init). Same shape as the existing delete ✕ button; hover color
+  // is parameterised so each action gets a distinct accent.
+  function pageRowIconButton(label, titleAttr, hoverBg) {
+    const btn = el('button');
+    btn.textContent = label;
+    btn.title = titleAttr;
+    css(btn, {
+      flexShrink: '0',
+      width: '26px',
+      height: '26px',
+      padding: '0',
+      background: 'transparent',
+      border: `1px solid ${T.borderSoft}`,
+      borderRadius: '50%',
+      color: T.textMuted,
+      cursor: 'pointer',
+      fontSize: '13px',
+      fontFamily: T.fontBody,
+      transition: 'background 0.15s, color 0.15s, border-color 0.15s',
+    });
+    btn.addEventListener('mouseenter', () => { btn.style.background = hoverBg; btn.style.color = '#fff'; btn.style.borderColor = 'transparent'; });
+    btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; btn.style.color = T.textMuted; btn.style.borderColor = T.borderSoft; });
+    return btn;
+  }
+
   function openPagesPanel() {
     const existing = document.getElementById('__gitqi-pages-panel');
     if (existing) { existing.remove(); return; }
 
-    // Close theme panel if open
-    const themePanel = document.getElementById('__gitqi-theme-panel');
-    if (themePanel) themePanel.remove();
-    // Close help panel if open
-    const helpPanel = document.getElementById('__gitqi-help-panel');
-    if (helpPanel) helpPanel.remove();
+    closeSidePanels('__gitqi-pages-panel');
 
     if (!pagesInventory) {
       showStatus('Link your site folder to manage pages', true);
@@ -2668,30 +3300,17 @@ RULES:
       row.append(info);
 
       // Duplicate is available on every page row (including the current one):
-      // a no-AI way to seed a new page from an existing file. Requires folder
-      // access so we can read the source bytes off disk and write the copy.
+      // a no-AI way to seed a new page from an existing file. Init lives next
+      // to it because both are "act on this page" tools that don't navigate
+      // away. Both require folder access so we can read/write disk bytes.
       if (dirHandle) {
-        const dupBtn = el('button');
-        dupBtn.textContent = '⧉';
-        dupBtn.title = 'Duplicate page';
-        css(dupBtn, {
-          flexShrink: '0',
-          width: '26px',
-          height: '26px',
-          padding: '0',
-          background: 'transparent',
-          border: `1px solid ${T.borderSoft}`,
-          borderRadius: '50%',
-          color: T.textMuted,
-          cursor: 'pointer',
-          fontSize: '13px',
-          fontFamily: T.fontBody,
-          transition: 'background 0.15s, color 0.15s, border-color 0.15s',
-        });
-        dupBtn.addEventListener('mouseenter', () => { dupBtn.style.background = T.accent2; dupBtn.style.color = '#fff'; dupBtn.style.borderColor = 'transparent'; });
-        dupBtn.addEventListener('mouseleave', () => { dupBtn.style.background = 'transparent'; dupBtn.style.color = T.textMuted; dupBtn.style.borderColor = T.borderSoft; });
+        const dupBtn = pageRowIconButton('⧉', 'Duplicate page', T.accent2);
         dupBtn.addEventListener('click', () => { panel.remove(); promptDuplicatePage(page); });
         row.append(dupBtn);
+
+        const initBtn = pageRowIconButton('✨', 'Init this page — tag sections, headings, images, and videos', T.accent);
+        initBtn.addEventListener('click', () => { panel.remove(); runInitForPage(page); });
+        row.append(initBtn);
       }
 
       if (!isCurrent) {
@@ -5936,12 +6555,7 @@ RULES:
       document.getElementById('__gitqi-theme-panel').remove();
       return;
     }
-    // Close pages panel if open (they occupy the same side-panel slot)
-    const pagesPanel = document.getElementById('__gitqi-pages-panel');
-    if (pagesPanel) pagesPanel.remove();
-    // Close help panel if open
-    const helpPanel = document.getElementById('__gitqi-help-panel');
-    if (helpPanel) helpPanel.remove();
+    closeSidePanels('__gitqi-theme-panel');
 
     // Start prewarming the font preview cache. By the time the user opens the
     // font picker, most popular fonts are already rendered; scroll-into-view
@@ -6540,49 +7154,6 @@ RULES:
 
       content.appendChild(section);
     }
-
-    // Maintenance section — currently just the unused-asset cleanup. Stays at
-    // the very bottom of the panel since it's a one-off house-keeping action,
-    // not part of routine theme editing.
-    const maintSection = el('div');
-    css(maintSection, { padding: '14px 18px 22px', borderTop: `1px solid ${T.borderSoft}`, marginTop: '6px' });
-
-    const maintLabel = el('div');
-    maintLabel.textContent = 'Maintenance';
-    css(maintLabel, { fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.1em', color: T.textMuted, marginBottom: '8px' });
-
-    const cleanupBtn = el('button');
-    cleanupBtn.textContent = '🧹 Clean up unused assets';
-    css(cleanupBtn, {
-      width: '100%',
-      padding: '9px 12px',
-      background: dirHandle ? T.bgAlt : T.bgAlt,
-      color: dirHandle ? T.primary : T.textMuted,
-      border: `1.5px solid ${T.borderSoft}`,
-      borderRadius: T.radiusPill,
-      cursor: dirHandle ? 'pointer' : 'not-allowed',
-      fontSize: '12.5px',
-      fontFamily: T.fontBody,
-      fontWeight: '500',
-      letterSpacing: '-0.005em',
-      transition: 'background 0.18s ease, border-color 0.18s ease',
-    });
-    cleanupBtn.title = dirHandle
-      ? 'Find and delete files in assets/ that nothing on the site references'
-      : 'Link your site folder first';
-    cleanupBtn.disabled = !dirHandle;
-    if (dirHandle) {
-      cleanupBtn.addEventListener('mouseenter', () => { cleanupBtn.style.background = T.accent3; cleanupBtn.style.borderColor = 'transparent'; });
-      cleanupBtn.addEventListener('mouseleave', () => { cleanupBtn.style.background = T.bgAlt; cleanupBtn.style.borderColor = T.borderSoft; });
-      cleanupBtn.addEventListener('click', () => { panel.remove(); promptAssetCleanup(); });
-    }
-
-    const maintHint = el('div');
-    maintHint.textContent = 'Shows a preview before anything is deleted.';
-    css(maintHint, { fontSize: '11px', color: T.textMuted, marginTop: '6px', lineHeight: '1.45' });
-
-    maintSection.append(maintLabel, cleanupBtn, maintHint);
-    content.appendChild(maintSection);
 
     panel.append(header, content);
     document.body.appendChild(panel);

@@ -118,16 +118,60 @@ Identifies and activates editable regions.
 
 **Move** (`moveSection`): reorders within sibling `[data-zone]` elements, with the footer pinned in place. Captures undo, scrolls the moved section into view (`block: 'nearest'`), and calls `refreshAddButtons()` to keep "+ Add Section" markers consistent.
 
+### 1a. Page Init Scanner
+
+`initializePageContent(rootEl)` walks a DOM root and injects the `data-*` markers GitQi needs so the editor can manage an arbitrary HTML page. Two surfaces:
+
+- **Live DOM** — `runInitOnCurrentPage()` (gear menu → ✨ Init this page; Pages-panel ✨ on the current row) snapshots, scans `document.body`, re-runs `activateZones() + activateNav()`, marks dirty so auto-save persists the tagging.
+- **Disk doc** — `initPageOnDisk(page)` reads the file via `dirHandle.getFileHandle`, parses with `DOMParser`, scans `doc.body`, and writes `'<!DOCTYPE html>\n' + doc.documentElement.outerHTML` back only when the stats are non-zero (skipping the write keeps a re-init on an already-tagged file out of git as a no-op change). Surfaced as the per-row ✨ on non-current pages in the Pages panel via `runInitForPage(page)`, which dispatches to the live path or the disk path based on whether `page.file === CURRENT_FILENAME`.
+
+`formatInitStats(stats)` produces the human-readable summary ("3 zones, 8 editables, 2 images") and returns `null` when nothing was tagged, so both entry points share the same "Nothing new" branch.
+
+**Zone allowlist** (`INIT_ZONE_TAGS`) — `section`, `header`, `footer`, `main`, `article`. Plain `<div>` is never auto-tagged; if the user wants a div to be a zone they have to either wrap it in `<section>` or AI-Reformat. No magical heuristics.
+
+**Innermost-wins** (`selectInnermostZones`) — when a candidate contains another candidate, the outer is skipped. A `<main>` wrapping `<section>`s yields the sections as zones, not the main. Keeps editing granularity at the natural level and avoids nested `[data-zone]` (which would double-bind section controls).
+
+**Slug priority** (`pickZoneSlug`):
+1. Existing `id` (already meaningful to the page).
+2. Canonical name for `<header>`/`<footer>`/`<main>` (one of each is typical).
+3. First descendant heading text, run through `initSlugify`.
+4. Tag name + numeric fallback (`section`, `section-2`, …).
+
+Collisions are resolved with a `-2`, `-3`, … walk against a `taken` set seeded from `[data-zone]` already on the root. The set is per-scan, not document-wide, so parsing a disk doc never collides with live-page slugs.
+
+**Editable rules** (`tagEditablesInZone`) — for each `h1-h6 / p / li / a` inside a zone:
+- Skip if already `[data-editable]`, inside `[data-editor-ui]`, inside `<nav>` (nav has its own handler), or inside `[data-editable-video]` (links overlaying a video shouldn't become contenteditable).
+- Skip if an ancestor up to the zone is already `[data-editable]` — so an `<a>` inside a `<p data-editable>` is left alone; the parent's contenteditable covers it and the link popover still intercepts clicks.
+- For `<a>`: only tag if it has text and no `<img>` / `<iframe>` / `<svg>` / block child (`isAnchorEditableCandidate`). Anchor-wrapped images stay un-tagged; the link popover still works via click intercept and the image still binds via `data-editable-image`.
+- For others: skip if any block-tag child (`INIT_BLOCK_CHILD_TAGS`) — tagging a `<p>` wrapping a `<div>` as contenteditable would let the user type inside the nested block and produce broken HTML.
+
+Lists: each `<li>` becomes its own editable. The `<ul>`/`<ol>` is left alone. (Enter-in-`<li>` → new sibling `<li>` is deferred as a separate editor-wide change.)
+
+**Images** — every `<img>` in a zone (not inside `[data-editor-ui]`) gets `data-editable-image`. Strictly speaking `activateZone` binds every `<img>` regardless of the marker, but tagging keeps the data model self-describing for AI prompts and future tooling.
+
+**YouTube embeds** (`wrapVideosInZone`) — for each `<iframe>` whose `src` matches YouTube (`youtube.com/embed/`, `youtu.be/`, `youtube.com/watch`):
+- If the iframe's parent is a single-child `<div>` (looks like an existing aspect-ratio wrapper) and isn't the zone itself, **promote** the parent by adding `data-editable-video` — preserves whatever sizing the page already has.
+- Otherwise create a fresh 16:9 wrapper (`padding-bottom:56.25%`) around the iframe so the canonical markup ships.
+
+Non-YouTube iframes (Vimeo, embeds, etc.) are left alone — no popover supports them.
+
+**Idempotent** — every check is "skip if already tagged." Re-running picks up only newly-added content. The stats object distinguishes `zonesAdded` from `zonesSkipped` so the UI can say "Nothing new to init" when appropriate.
+
+**Coverage** (verified via standalone test in `/tmp/test-init.js` during development) — 15 cases including main+nested sections, header/footer canonical slugs, id-preferred slug, idempotent re-run, slug collisions, nav skipping, anchor-with-img vs anchor-with-text, per-li tagging, p>a containment, YouTube wrap + parent-promote, non-YouTube left-alone, div-in-p disqualification, article zoning.
+
 ### 2. Toolbar
 
 Fixed-position bar prepended to the page in edit mode. Marked `data-editor-ui` so it's stripped on export/publish.
 
-Left → right: site title with `●` dirty indicator, status message area, **↩ Undo**, **↪ Redo**, **⟲ Sync**, **Pages**, **Theme**, **Export**, **Publish** (rightmost), **?** (help, far right).
+Left → right: site title with `●` dirty indicator, status message area, **↩ Undo**, **↪ Redo**, **⟲ Sync**, **Pages**, **Theme**, **Export**, **Publish**, **⚙** (site utilities), **?** (help, rightmost).
 
 - **⟲ Sync** — manual trigger for `syncSharedToOtherPagesIfChanged()`. Resets `lastSyncedSharedSnapshot` first so it always runs, then surfaces a status like "Synced shared elements to N other page(s) ✓". Use case: hand-editing nav/footer HTML on disk and wanting to force-propagate without making a trivial dirty edit just to trigger auto-save.
 - **Export** — `serialize({ local: false })` + download. Becomes the visual CTA (styled primary) when Publish is hidden in offline mode.
 - **Publish** — only present when `hasGitHub`. Commits all pages + `gitqi-pages.json` to GitHub.
+- **⚙** — always present. Opens the Site Utilities side panel: capability/folder status, **Re-link folder** (opens a confirm-style modal via `promptRelinkFolder()` that mirrors the initial folder-access banner — accent stripe, current-folder hint, location hint, explanation of what will change — then replaces the stored handle, refreshes inventory, resets shared snapshot), **✨ Init this page** (see §1a), and **🧹 Clean up unused assets** (relocated from the Theme panel). Mutually exclusive with the other side panels via `closeSidePanels(exceptId)`.
 - **?** — always present. Opens the Help side panel: keyboard shortcuts, capability summary, and a "Currently unavailable" block listing missing features and how to enable them (links to AI Studio for Gemini, fine-grained-PAT instructions for GitHub). Each missing capability has its own `note:` line: Gemini-missing mentions native nav controls + duplicate-as-template; GitHub-missing mentions Export + local `assets/`.
+
+The ⚙ and ? buttons share a `makeIconButton(text, title)` helper so they stay visually identical.
 
 `injectToolbar()` shifts `body { padding-top }` and any fixed `<nav>`'s `top` down by 44px to make room. `setDirty(bool)` toggles the indicator and schedules a debounced auto-save (1500ms).
 
@@ -287,7 +331,7 @@ Flat-anchor fallback (no `<ul>` in the nav): clones from the template's own clus
 
 Multi-page management. Requires folder access (`dirHandle`).
 
-- `openPagesPanel()` — toggled by the Pages toolbar button. Lists all pages from `pagesInventory`, with **⧉ Duplicate** + **Open** + **✕ Delete** per page (Duplicate is the only button shown for the current page).
+- `openPagesPanel()` — toggled by the Pages toolbar button. Lists all pages from `pagesInventory`, with **⧉ Duplicate** + **✨ Init** + **Open** + **✕ Delete** per page. Duplicate and Init are shown on the current row too; Open and Delete only on non-current rows. Init dispatches to the live or disk path based on which page was clicked (see §1a). The small circular row buttons share a `pageRowIconButton(label, title, hoverBg)` helper so each action gets a distinct accent while staying visually consistent.
 - `promptAddPage` / `generatePage(description, navLabel, filename, { model })`: AI-only, gated on `hasGemini`. Snapshot, build prompt (style block, nav-specific CSS, nav HTML verbatim, example section), call AI, write to disk, register in inventory, `addLinkToNav` programmatically, `activateNav()`, force-sync. The **+ Add Page** button at the bottom of the panel only appears when `hasGemini`.
 - `promptDuplicatePage(sourcePage)` / `duplicatePage(sourcePage, newFilename, navLabel)` — **no AI**, available regardless of Gemini. Modal collects new filename (default: `{stem}-copy`) and optional nav label; `sanitizeFilename` lowercases, replaces whitespace with hyphens, strips characters outside `[a-z0-9._-]`, and ensures a `.html` suffix; rejects collisions with `pagesInventory`. Reads source bytes (for the current page, `serialize({ local: true })` is used instead so any unsaved live edits are captured), rewrites `<title>` via `filenameToTitle`, writes to disk, registers in inventory, `addLinkToNav` to the current nav, force-sync.
 - `deletePageFromSite(page)`: `removePageFromNav` strips nav links pointing to the file, remove from inventory, `dirHandle.removeEntry(filename)`, force-sync to clean nav across all pages.
@@ -402,7 +446,8 @@ Toggled by the **Theme** toolbar button, mutually exclusive with the Pages panel
 - **Site Identity** — favicon (PNG-converted, uploaded + written locally + favicon links upserted), page title, meta description, keywords. Title/description/keywords are page-specific (not synced); favicon syncs.
 - **CSS Variables** — grouped Colors / Typography / Spacing / Layout. Live preview via `documentElement.style.setProperty()` plus patching the main `<style>` textContent (which then propagates to every page on the next sync).
 - Color vars get a color picker + hex input. Font-family vars get a text input plus the **Aa** Google Fonts picker (`makeGoogleFontPicker`). The Typography group has an inline "Add font variable" form whose font picker fills the value only — the var name describes the role (e.g. `--font-display`), not the family — and the `<link>` is injected on Add, not on preview.
-- **Maintenance → 🧹 Clean up unused assets** at the bottom of the panel routes to `promptAssetCleanup()` (see §17a). Disabled when no folder is linked.
+
+Maintenance actions (asset cleanup, folder re-link, page init) live in the **⚙ Site Utilities** panel, not here.
 
 ### 17a. Asset Cleanup
 
