@@ -364,6 +364,35 @@ make fonts
 
 See the [Makefile](./Makefile) for the full details of what each target does.
 
+### Testing
+
+GitQi has an end-to-end test suite that runs Playwright + Chromium inside a Docker container. **The host only needs Docker** — Node, npm, and browsers all live inside the image so the repo stays free of `package.json` / `node_modules`.
+
+```bash
+# Build the test container (run once, or after Dockerfile changes)
+make test-build
+
+# Run the full suite headless
+make test
+
+# Run with a visible browser (requires X11 on the host)
+make test-headed
+
+# Run a single test in inspector mode for debugging
+make test-debug T=tests/e2e/edit-text.spec.js
+
+# Drop into the container for manual poking
+make test-shell
+```
+
+`make test` auto-builds the image on first run, so a fresh clone needs `make test` and nothing else.
+
+**How the tests work.** Real Chromium runs `gitqi.js` against fixture pages with a small fake at the FSAPI boundary — `window.showDirectoryPicker()` returns an in-memory `FileSystemDirectoryHandle` backed by a `Map<path, bytes>`. Tests assert against both the live DOM and that fake disk. `fetch` to `generativelanguage.googleapis.com` (Gemini) and `api.github.com` (GitHub) is similarly intercepted in-browser with configurable responses + a stateful repo simulator. Everything else — contenteditable, MutationObserver, undo snapshots, serialization, mailto obfuscation, shared-head sync — runs exactly as in production.
+
+Test files live under `tests/e2e/`, shared helpers under `tests/helpers/`, fixtures under `tests/fixtures/`. To add a new test, drop a `*.spec.js` under `tests/e2e/` and start from `setupEditor(page, fixturePath, opts)`. See [`tests/helpers/setup.js`](./tests/helpers/setup.js) for the full helper API and any existing spec file for a working pattern.
+
+Test artifacts (`tests/test-results/`, `tests/playwright-report/`) are gitignored — generated per run.
+
 ### Google Fonts manifest
 
 GitQi ships a full Google Fonts catalog (`google-fonts.json`, served alongside `gitqi.js`) so the font picker covers the entire library, not just a curated subset. The manifest is regenerated manually via `make fonts`. At runtime `gitqi.js` fetches it, caches it in `localStorage`, and falls back to a small built-in list if the fetch fails.

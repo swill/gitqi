@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Links Fixture</title>
+  <style>
+    :root {
+      --color-primary: #1a1b3a;
+      --color-bg: #fff;
+      --color-text: #333;
+      --font-body: sans-serif;
+      --font-heading: sans-serif;
+    }
+    body { margin: 0; font-family: var(--font-body); color: var(--color-text); }
+    nav { padding: 1rem 2rem; }
+    section { padding: 2rem; max-width: 900px; margin: 0 auto; }
+    .cta-wrap { padding: 2rem; text-align: center; }
+    .cta { display: inline-block; padding: 0.75rem 1.5rem; background: var(--color-primary); color: #fff; text-decoration: none; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <nav>
+    <ul>
+      <li><a href="index.html" class="active">Home</a></li>
+      <li><a href="about.html">About</a></li>
+    </ul>
+  </nav>
+
+  <main>
+    <section data-zone="hero" data-zone-label="Hero">
+      <h1 data-editable>Links fixture</h1>
+
+      <!-- Inline link inside an editable paragraph: Remove should UNWRAP -->
+      <p data-editable>
+        Visit <a href="https://example.com">our site</a> for more information.
+      </p>
+
+      <!-- Mailto link inside an editable paragraph -->
+      <p data-editable>
+        Email us at <a href="mailto:hello@example.com?subject=Hi&amp;body=Hello%20there">hello@example.com</a>.
+      </p>
+    </section>
+
+    <!-- CTA button OUTSIDE any [data-editable] host: Remove should drop the whole <a> -->
+    <div class="cta-wrap" data-zone="cta" data-zone-label="CTA">
+      <a class="cta" href="https://example.com/signup">Sign up now</a>
+    </div>
+  </main>
+
+  <footer data-zone="footer" data-zone-label="Footer">
+    <p data-editable>&copy; Links fixture</p>
+  </footer>
+
+  <script src="/gitqi.js"></script>
+</body>
+</html>

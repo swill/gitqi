@@ -1,5 +1,5 @@
 # GitQi — development and release tooling
-# Requires: git, node (for syntax check), python3 (for local server), curl (for fonts)
+# Requires: git, node (for syntax check), python3 (for local server), curl (for fonts), docker (for tests)
 
 CURRENT_VERSION := $(shell cat VERSION)
 
@@ -8,9 +8,23 @@ CURRENT_VERSION := $(shell cat VERSION)
 -include .env
 export
 
+# ── Test container ────────────────────────────────────────────────────────────
+# Playwright + Chromium live inside a Docker image so the host doesn't need
+# Node / npm / browsers. See Dockerfile for the image definition.
+TEST_IMAGE     := gitqi-tests
+TEST_DOCKERFILE := Dockerfile
+# Mount the repo into /work; run as the host user so generated files
+# (test-results/, playwright-report/) are owned by you, not root.
+DOCKER_RUN_BASE := docker run --rm \
+	-v "$(CURDIR)":/work \
+	-w /work \
+	--user $(shell id -u):$(shell id -g) \
+	--init \
+	--ipc=host
+
 .DEFAULT_GOAL := help
 
-.PHONY: help serve check release fonts
+.PHONY: help serve check release fonts test test-build test-headed test-debug test-shell test-update-snapshots
 
 # ── Help ──────────────────────────────────────────────────────────────────────
 
@@ -45,6 +59,46 @@ serve: ## Start a local HTTP server on port 8080 (CORS enabled)
 
 check: ## Validate JavaScript syntax
 	@node --check gitqi.js && echo "gitqi.js — syntax OK"
+
+# ── Tests ─────────────────────────────────────────────────────────────────────
+#
+# Playwright end-to-end tests run entirely inside a Docker container. The host
+# only needs Docker — no Node, no npm, no browsers. The repo is bind-mounted
+# at /work so test artifacts (results, reports) land in tests/test-results
+# and tests/playwright-report on the host.
+#
+# The python http.server in Playwright's webServer config serves the repo
+# root, so fixture pages can <script src="/gitqi.js"></script>.
+
+test-build: ## Build the Playwright test container (run once, or after Dockerfile edits)
+	@docker build -t $(TEST_IMAGE) -f $(TEST_DOCKERFILE) .
+
+test: ## Run the Playwright test suite (headless, in docker)
+	@docker image inspect $(TEST_IMAGE) >/dev/null 2>&1 || $(MAKE) test-build
+	@$(DOCKER_RUN_BASE) $(TEST_IMAGE)
+
+test-headed: ## Run tests with a visible browser (requires X11 on host)
+	@docker image inspect $(TEST_IMAGE) >/dev/null 2>&1 || $(MAKE) test-build
+	@xhost +local:docker >/dev/null 2>&1 || true
+	@$(DOCKER_RUN_BASE) \
+		-e DISPLAY=$(DISPLAY) \
+		-v /tmp/.X11-unix:/tmp/.X11-unix \
+		$(TEST_IMAGE) \
+		playwright test --config=tests/playwright.config.cjs --headed
+
+test-debug: ## Run a single test in inspector mode. Usage: make test-debug T=tests/e2e/edit-text.spec.js
+	@docker image inspect $(TEST_IMAGE) >/dev/null 2>&1 || $(MAKE) test-build
+	@xhost +local:docker >/dev/null 2>&1 || true
+	@$(DOCKER_RUN_BASE) \
+		-e DISPLAY=$(DISPLAY) \
+		-e PWDEBUG=1 \
+		-v /tmp/.X11-unix:/tmp/.X11-unix \
+		$(TEST_IMAGE) \
+		playwright test --config=tests/playwright.config.cjs $(T)
+
+test-shell: ## Drop into the test container for poking around
+	@docker image inspect $(TEST_IMAGE) >/dev/null 2>&1 || $(MAKE) test-build
+	@$(DOCKER_RUN_BASE) -it --entrypoint /bin/bash $(TEST_IMAGE)
 
 # ── Font manifest ─────────────────────────────────────────────────────────────
 #

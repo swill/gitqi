@@ -1,1 +1,5 @@
 .env
+
+# Playwright test artifacts (generated locally; never committed).
+tests/test-results/
+tests/playwright-report/

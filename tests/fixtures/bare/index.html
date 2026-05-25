@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Bare Test Site</title>
+  <style>
+    :root {
+      --color-primary: #1a1b3a;
+      --color-bg: #ffffff;
+      --color-text: #333333;
+      --font-heading: sans-serif;
+      --font-body: sans-serif;
+    }
+    body { font-family: var(--font-body); color: var(--color-text); background: var(--color-bg); margin: 0; }
+    section { padding: 2rem; max-width: 1100px; margin: 0 auto; }
+    nav { padding: 1rem 2rem; background: #f5f5fa; }
+    nav ul { list-style: none; margin: 0; padding: 0; display: flex; gap: 1rem; }
+    h1 { font-family: var(--font-heading); color: var(--color-primary); }
+  </style>
+</head>
+<body>
+  <!-- Deliberately NO data-zone / data-editable markers — Init Page
+       scanner should add them. -->
+  <nav>
+    <ul>
+      <li><a href="index.html">Home</a></li>
+    </ul>
+  </nav>
+
+  <main>
+    <section>
+      <h1>Bare Heading</h1>
+      <p>A paragraph that should become editable after init.</p>
+    </section>
+
+    <section>
+      <h2>Second Section</h2>
+      <p>Another paragraph.</p>
+      <ul>
+        <li>List item one</li>
+        <li>List item two</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    <p>&copy; Bare site footer.</p>
+  </footer>
+
+  <script src="/gitqi.js"></script>
+</body>
+</html>

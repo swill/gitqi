@@ -1,0 +1,9 @@
+# Keep the Docker build context small and stable.
+.git/
+.env
+tests/test-results/
+tests/playwright-report/
+
+# Old pinned releases — not needed inside the container.
+gitqi-*.js
+!gitqi.js
