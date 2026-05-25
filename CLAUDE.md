@@ -75,7 +75,7 @@ const hasGemini = !!geminiKey;              // gates all four AI flows + their e
 `init()` runs once at DOMContentLoaded:
 
 1. `loadGoogleFontsManifest()` — install cached manifest synchronously; background-fetch fresh
-2. `injectToolbar()` → `migrateLegacyWebbyMarkers()` → `activateZones()` → `activateNav()`
+2. `injectToolbar()` → `activateZones()` → `activateNav()`
 3. Bind: mutation observer, link handlers, selection toolbar, undo/redo
 4. `initFileAccess()` — re-link the site folder if a handle is in IndexedDB; otherwise show the folder-picker banner
 5. `lastSyncedSharedSnapshot = getSharedSnapshot()` — baseline so the first auto-save doesn't spuriously sync
@@ -122,42 +122,20 @@ Identifies and activates editable regions.
 
 `initializePageContent(rootEl)` walks a DOM root and injects the `data-*` markers GitQi needs so the editor can manage an arbitrary HTML page. Two surfaces:
 
-- **Live DOM** — `runInitOnCurrentPage()` (gear menu → ✨ Init this page; Pages-panel ✨ on the current row) snapshots, scans `document.body`, re-runs `activateZones() + activateNav()`, marks dirty so auto-save persists the tagging.
-- **Disk doc** — `initPageOnDisk(page)` reads the file via `dirHandle.getFileHandle`, parses with `DOMParser`, scans `doc.body`, and writes `'<!DOCTYPE html>\n' + doc.documentElement.outerHTML` back only when the stats are non-zero (skipping the write keeps a re-init on an already-tagged file out of git as a no-op change). Surfaced as the per-row ✨ on non-current pages in the Pages panel via `runInitForPage(page)`, which dispatches to the live path or the disk path based on whether `page.file === CURRENT_FILENAME`.
+- **Live DOM** — `runInitOnCurrentPage()` (gear menu, or Pages-panel ✨ on the current row): snapshots, scans `document.body`, re-runs `activateZones() + activateNav()`, marks dirty so auto-save persists the tagging.
+- **Disk doc** — `initPageOnDisk(page)` reads the file, parses with `DOMParser`, scans, and writes back only when stats are non-zero (so a re-init on an already-tagged file is a no-op in git). Surfaced as the per-row ✨ for non-current pages; `runInitForPage(page)` dispatches between the two paths by `page.file === CURRENT_FILENAME`.
 
-`formatInitStats(stats)` produces the human-readable summary ("3 zones, 8 editables, 2 images") and returns `null` when nothing was tagged, so both entry points share the same "Nothing new" branch.
+**Zone allowlist** (`INIT_ZONE_TAGS`): `section`, `header`, `footer`, `main`, `article`. Plain `<div>` is never auto-tagged — wrap in `<section>` or use AI-Reformat. **Innermost-wins** (`selectInnermostZones`) skips outer candidates that contain inner ones, so a `<main>` wrapping `<section>`s yields the sections as zones, not the main. Avoids nested `[data-zone]`.
 
-**Zone allowlist** (`INIT_ZONE_TAGS`) — `section`, `header`, `footer`, `main`, `article`. Plain `<div>` is never auto-tagged; if the user wants a div to be a zone they have to either wrap it in `<section>` or AI-Reformat. No magical heuristics.
+**Slug priority** (`pickZoneSlug`): existing `id` → canonical name for `header`/`footer`/`main` → first descendant heading slug → tag name + numeric fallback. Collisions walk `-2, -3, …` against a per-scan `taken` set, so a disk-doc scan never collides with live-page slugs.
 
-**Innermost-wins** (`selectInnermostZones`) — when a candidate contains another candidate, the outer is skipped. A `<main>` wrapping `<section>`s yields the sections as zones, not the main. Keeps editing granularity at the natural level and avoids nested `[data-zone]` (which would double-bind section controls).
+**Editable rules** (`tagEditablesInZone`) — `h1-h6 / p / li / a` inside a zone get `data-editable`, with skip conditions for: already tagged, inside editor UI or `<nav>` or `[data-editable-video]`, has an editable ancestor up to the zone, has a disallowed block child (`INIT_BLOCK_CHILD_TAGS`). Anchors additionally require text content and no `<img>`/`<iframe>`/`<svg>` child (`isAnchorEditableCandidate`) — anchor-wrapped images stay untagged; the link popover still works via click intercept.
 
-**Slug priority** (`pickZoneSlug`):
-1. Existing `id` (already meaningful to the page).
-2. Canonical name for `<header>`/`<footer>`/`<main>` (one of each is typical).
-3. First descendant heading text, run through `initSlugify`.
-4. Tag name + numeric fallback (`section`, `section-2`, …).
+**Images** — every `<img>` in a zone (not inside `[data-editor-ui]`) gets `data-editable-image`. `activateZone` binds every `<img>` regardless of the marker, but tagging keeps the data model self-describing for AI prompts.
 
-Collisions are resolved with a `-2`, `-3`, … walk against a `taken` set seeded from `[data-zone]` already on the root. The set is per-scan, not document-wide, so parsing a disk doc never collides with live-page slugs.
+**YouTube embeds** (`wrapVideosInZone`) — `<iframe>` whose `src` matches YouTube gets a `[data-editable-video]` wrapper. If the iframe's parent is a single-child `<div>` (existing aspect-ratio wrapper), promote it; otherwise wrap in a fresh 16:9 container. Non-YouTube iframes are left alone.
 
-**Editable rules** (`tagEditablesInZone`) — for each `h1-h6 / p / li / a` inside a zone:
-- Skip if already `[data-editable]`, inside `[data-editor-ui]`, inside `<nav>` (nav has its own handler), or inside `[data-editable-video]` (links overlaying a video shouldn't become contenteditable).
-- Skip if an ancestor up to the zone is already `[data-editable]` — so an `<a>` inside a `<p data-editable>` is left alone; the parent's contenteditable covers it and the link popover still intercepts clicks.
-- For `<a>`: only tag if it has text and no `<img>` / `<iframe>` / `<svg>` / block child (`isAnchorEditableCandidate`). Anchor-wrapped images stay un-tagged; the link popover still works via click intercept and the image still binds via `data-editable-image`.
-- For others: skip if any block-tag child (`INIT_BLOCK_CHILD_TAGS`) — tagging a `<p>` wrapping a `<div>` as contenteditable would let the user type inside the nested block and produce broken HTML.
-
-Lists: each `<li>` becomes its own editable. The `<ul>`/`<ol>` is left alone. (Enter-in-`<li>` → new sibling `<li>` is deferred as a separate editor-wide change.)
-
-**Images** — every `<img>` in a zone (not inside `[data-editor-ui]`) gets `data-editable-image`. Strictly speaking `activateZone` binds every `<img>` regardless of the marker, but tagging keeps the data model self-describing for AI prompts and future tooling.
-
-**YouTube embeds** (`wrapVideosInZone`) — for each `<iframe>` whose `src` matches YouTube (`youtube.com/embed/`, `youtu.be/`, `youtube.com/watch`):
-- If the iframe's parent is a single-child `<div>` (looks like an existing aspect-ratio wrapper) and isn't the zone itself, **promote** the parent by adding `data-editable-video` — preserves whatever sizing the page already has.
-- Otherwise create a fresh 16:9 wrapper (`padding-bottom:56.25%`) around the iframe so the canonical markup ships.
-
-Non-YouTube iframes (Vimeo, embeds, etc.) are left alone — no popover supports them.
-
-**Idempotent** — every check is "skip if already tagged." Re-running picks up only newly-added content. The stats object distinguishes `zonesAdded` from `zonesSkipped` so the UI can say "Nothing new to init" when appropriate.
-
-**Coverage** (verified via standalone test in `/tmp/test-init.js` during development) — 15 cases including main+nested sections, header/footer canonical slugs, id-preferred slug, idempotent re-run, slug collisions, nav skipping, anchor-with-img vs anchor-with-text, per-li tagging, p>a containment, YouTube wrap + parent-promote, non-YouTube left-alone, div-in-p disqualification, article zoning.
+**Idempotent** — every check is "skip if already tagged." Stats distinguish `zonesAdded` from `zonesSkipped` so the UI says "Nothing new to init" when appropriate.
 
 ### 2. Toolbar
 
@@ -181,7 +159,7 @@ The ⚙ and ? buttons share a `makeIconButton(text, title)` helper so they stay 
 
 Keeps HTML files on disk in sync with the live DOM via the File System Access API. Chrome / Edge only — other browsers see a blocking modal.
 
-- `initFileAccess()`: load `FileSystemDirectoryHandle` from IndexedDB (with v1.0.x per-page → per-directory key migration), verify permission, silently re-link or show the folder banner.
+- `initFileAccess()`: load `FileSystemDirectoryHandle` from IndexedDB, verify permission, silently re-link or show the folder banner.
 - `saveChanges()` (auto-save): `writeCurrentPageToLocalFile()` then `syncSharedToOtherPagesIfChanged()`.
 - `serialize({ local: true })` keeps the `secrets.js` and `gitqi.js` script tags so edit mode activates on next open. `local: false` strips them for published output.
 - Image upload: `writeImageToLocalDir(file)` writes to `assets/` and the serializer resolves any `data-gitqi-src` blob-URL placeholders back to relative paths on publish.
@@ -224,10 +202,10 @@ Subtree observer on `<body>` for `characterData` + `childList`. Mutations origin
 `bindImageHandler(img)` paints a translucent white haze sized to the image's bounding box (re-measured on `mouseenter` so it stays correct as responsive layouts flow) plus a "Click to replace image" hint pill. Clicking opens a hidden file input.
 
 `handleImageUpload(file, imgEl)`:
-- Read as ArrayBuffer
+- Read as ArrayBuffer; snapshot for undo
 - If `hasGitHub`: base64 + `github.uploadFile('assets/' + file.name)`. In offline mode the GitHub call is skipped entirely; status reads "Saving image..." → "Image saved ✓" instead of "Uploading..." / "Image uploaded ✓".
-- If `dirHandle`: `writeImageToLocalDir(file)`; set `imgEl.src = './assets/' + file.name`
-- If no folder access: display via `URL.createObjectURL(file)`; store `'./assets/' + file.name` in `data-gitqi-src` for the serializer to resolve at publish/export time
+- If `dirHandle`: `writeImageToLocalDir(file)` writes the bytes into `assets/`.
+- Always: `imgEl.src` is set to a fresh `URL.createObjectURL(...)` blob URL and `data-gitqi-src` is set to `'./assets/' + file.name`. The blob URL is used so replacing an image with a new file of the same name doesn't show the browser-cached old bytes; the serializer resolves `data-gitqi-src` back to the relative path on save and publish.
 
 The favicon upload path in the Theme editor follows the same `hasGitHub` gating.
 
@@ -383,7 +361,7 @@ Both modes:
 - Restore the original `body { padding-top }` and any fixed-nav `top` offset that was shifted for the toolbar
 
 `local: false` only:
-- Strip `<script src="…secrets.js">` and `<script src="…gitqi.js">` (also legacy `webby.js`)
+- Strip `<script src="…secrets.js">` and `<script src="…gitqi.js">`
 - Strip the `data-gitqi-style` marker from styled spans (the spans keep their inline styles)
 - `obfuscateMailtoLinks(clone)` — see §14a
 
@@ -391,17 +369,11 @@ Both modes:
 
 ### 14a. Email obfuscation (publish-output only)
 
-Plain `mailto:` addresses in deployed HTML are easy targets for spam scrapers. `obfuscateMailtoLinks(root)` runs inside `serialize({ local: false })`, which means it covers **both** Publish and Export — every artifact that leaves the editor has obfuscated mailto links. Live edits and `local:true` (auto-save to disk) stay readable so the editor remains usable.
+`obfuscateMailtoLinks(root)` runs inside `serialize({ local: false })`, so it covers both Publish and Export — every artifact that leaves the editor has obfuscated mailto links. Live edits and `local: true` saves stay readable.
 
-For each `<a href="mailto:…">`:
-- Encode the full mailto URL via `gqEncode` (`btoa(unescape(encodeURIComponent(reversed-string)))`) — base64 of the UTF-8 reversed string. Store in `data-gqe`. Set `href="javascript:void(0)"`.
-- If any text node descendant of the link contains the address (case-insensitive substring), `obfuscateEmailInTextNodes` replaces the matching slice with an empty `<span data-gqt="…">` placeholder. Casing is preserved (the matched slice, not the lower-cased one, is what gets encoded) so `Foo@Bar.com` round-trips intact. Surrounding text in the same node is preserved as siblings.
+For each `<a href="mailto:…">`: the URL is encoded via `gqEncode` (base64 of reversed UTF-8) into `data-gqe`, and `href` becomes `javascript:void(0)`. Text-node occurrences of the address inside the link are replaced with `<span data-gqt="…">` placeholders (`obfuscateEmailInTextNodes`), preserving original casing so `Foo@Bar.com` round-trips. A single inline decoder script (`[data-gqe-decoder]`) is appended once per body and reverses the encoding at page load, also stripping `data-gqe`/`data-gqt` so the live DOM ends up clean.
 
-A single inline decoder script is appended once per page (idempotent via `[data-gqe-decoder]`) at the end of `<body>`. It walks `[data-gqe]` to fix hrefs and `[data-gqt]` to fill in text, then removes both attributes so the page DOM ends up clean.
-
-**No `<noscript>` fallback** — emitting the email there would defeat the protection. No-JS visitors don't get the email; that's the trade-off.
-
-**Cross-document safety** — `obfuscateMailtoLinks` is also called on parsed-from-disk pages in `publishSite()`. Helpers use `node.ownerDocument.create…` (not the main `document`) so nodes are created in the correct doc.
+**Trade-off:** no `<noscript>` fallback — emitting the email there would defeat the protection. **Cross-document safety:** also called on disk-parsed pages in `publishSite()`; helpers use `node.ownerDocument` so nodes land in the correct doc.
 
 ### 15. GitHub Publisher
 
@@ -410,7 +382,7 @@ Gated on `hasGitHub`. The Publish toolbar button is not rendered when `githubTok
 `publishSite()`:
 
 1. Current page: `serialize({ local: false })` → `github.putFile(CURRENT_FILENAME, html, sha)`
-2. All other pages (if `dirHandle` + `pagesInventory`): read each page from disk → `DOMParser` → `migrateLegacyWebbyMarkersInDoc(doc)` → strip editor scripts → strip `data-gitqi-style` markers → `obfuscateMailtoLinks(doc)` → `github.putFile`
+2. All other pages (if `dirHandle` + `pagesInventory`): read each page from disk → `DOMParser` → strip editor scripts → strip `data-gitqi-style` markers → `obfuscateMailtoLinks(doc)` → `github.putFile`
 3. `gitqi-pages.json`: `github.putFile`
 
 The disk-loaded pages were last saved with `local: true`, so they still have plain mailto links and `data-gitqi-style` markers — both have to be cleaned per-page on the publish path because they didn't go through `serialize({ local: false })`.
@@ -419,25 +391,18 @@ The disk-loaded pages were last saved with `local: true`, so they still have pla
 
 ### 16. Undo / Redo
 
-Snapshot-based, capped at 20 entries. Text edits use the browser's native undo (handled inside `contenteditable`); structural changes capture a snapshot.
+Snapshot-based, capped at `UNDO_LIMIT = 20`. Text edits use the browser's native undo inside `contenteditable`; structural changes call `snapshotForUndo()` first. Keyboard: Ctrl+Z → undo; Ctrl+Shift+Z / Ctrl+Y → redo. Skipped when `e.target.isContentEditable`.
 
-`snapshotForUndo()` is called before every DOM mutation a user might want to undo. The current trigger list:
-
-- **Sections** — delete, duplicate, move ↑/↓, reformat (AI), add (AI), empty-editable remove (the red ✕ pill).
-- **Pages** — generate (AI), duplicate, delete.
-- **Nav** — reformat (AI), native add link, native move ← →, link-popover Remove link (in all three branches: nav, editable-body, non-editable-body).
-- **Images** — image upload (so swapping an `<img src>` is reversible; the old asset file isn't deleted, so undo just restores the old src that already exists in `assets/`).
+**Snapshot triggers:**
+- **Sections** — delete, duplicate, move ↑/↓, reformat, add, empty-editable remove (red ✕ pill).
+- **Pages** — generate, duplicate, delete.
+- **Nav** — reformat, native add link, native move ← →, link-popover Remove link (nav / editable-body / non-editable-body branches).
+- **Images** — image upload. Old asset files aren't deleted on swap, so undo just restores the prior `src`.
 - **Videos** — URL change in the YouTube popover; Remove video.
-- **Inline text formatting** — code wrap/unwrap, link wrap (createLink), `wrapSelectionInStyledSpan` (color / font / size — one snapshot for the cleanup-clear + wrap pair), explicit `clearInlineStyleFromSelection` ("Remove color" / "Clear font" / "Normal"). Bold/italic still use the browser's native `execCommand` undo since those are pure text edits inside `contenteditable`.
-- **Link popover live edits** — one snapshot per popover session, taken lazily on the first mutation. Per-keystroke snapshotting would burn through the 20-entry stack in seconds; Ctrl+Z reverts the whole popover-session worth of edits in one step.
+- **Inline text formatting** — code wrap/unwrap, link wrap, `wrapSelectionInStyledSpan` (color / font / size), explicit `clearInlineStyleFromSelection`. Bold/italic use the browser's native `execCommand` undo since those are pure text edits.
+- **Link popover live edits** — one snapshot per popover session, taken lazily on the first mutation, so Ctrl+Z reverts the whole session rather than one keystroke.
 
-When in doubt, snapshot. Snapshot cost is one body clone + a handful of `<style>` text copies — cheap. The undo stack is capped at `UNDO_LIMIT = 20`; oldest entries fall off.
-
-`captureSnapshot()` clones `<body>`, strips `[data-editor-ui]` and binding markers (`data-gitqi-bound`, `data-gitqi-nav-bound`, `data-gitqi-nav-item-bound`, `data-gitqi-video-bound`), and stores `bodyHTML` plus the main style content, all `<style id="__gitqi-section-*">`, and `<style id="__gitqi-nav-styles">`.
-
-`restoreSnapshot(snapshot)`: disconnect mutation observer → close popovers → save then re-attach `[data-editor-ui]` children → replace `body.innerHTML` → restore style blocks → `activateZones() + activateNav()` → `rerunInlineScripts(nav)` (rebinds hamburger toggles) → re-bind mutation observer → reset `lastSyncedSharedSnapshot`.
-
-Keyboard: Ctrl+Z → undo; Ctrl+Shift+Z / Ctrl+Y → redo. Skipped when `e.target.isContentEditable`.
+`captureSnapshot()` clones `<body>` (stripping editor UI and binding markers) and stores all GitQi-managed `<style>` blocks. `restoreSnapshot()` disconnects the mutation observer, closes popovers, swaps in the snapshotted body while preserving live editor-UI nodes, restores styles, re-runs `activateZones() + activateNav() + rerunInlineScripts(nav)`, re-binds the observer, and resets `lastSyncedSharedSnapshot`.
 
 ### 17. Theme Editor
 
@@ -451,20 +416,13 @@ Maintenance actions (asset cleanup, folder re-link, page init) live in the **⚙
 
 ### 17a. Asset Cleanup
 
-Find files under `assets/` that nothing on the site references anymore, with a preview-and-confirm flow before any deletion.
+Find files under `assets/` that nothing references, with a preview-and-confirm flow before any deletion.
 
-- `collectAssetReferences()` — belt-and-suspenders scanner combining two strategies on every source we look at:
-  - **DOM walk** (`harvestAssetRefsFromDoc`) — explicitly reads URL-bearing attributes on `img` (`src` / `srcset` / `data-gitqi-src`), `source`, `video`, `audio`, `a`, `link`, `iframe`, every `[style]` attribute, and every `<style>` block. This is the primary path because attribute values are guaranteed-clean strings; we don't have to trust whatever the serializer produces or worry about regex edge cases.
-  - **Text regex** (`ASSET_REF_RE = /assets\/([^\s"'\`)<>?#,]+)/gi`) — catches anything outside an obvious attribute (CSS `url()`, inline scripts, JSON in the inventory, hand-authored strings). Case-insensitive; deliberately drops the `\b` anchor because the `assets/` prefix is specific enough on its own.
+`collectAssetReferences()` uses two strategies per source: a DOM walk over URL-bearing attributes and `<style>` blocks (`harvestAssetRefsFromDoc`) plus a text regex (`ASSET_REF_RE = /assets\/([^\s"'\`)<>?#,]+)/gi`) for CSS `url()`, inline scripts, JSON, etc. Paths go through `normalizeAssetPath` (strips query/fragment, URL-decodes so `My%20Photo.jpg` matches `My Photo.jpg`, normalizes `./` prefix). Sources: live `document`, `serialize({ local: true })` of the current page, every other inventory page parsed via `DOMParser`, and `gitqi-pages.json`. The scanner errs heavily toward false-positives — false-negatives break the live site, false-positives just add a checkbox to the review modal.
 
-  Each path runs through `normalizeAssetPath`: strips `?query` / `#fragment`, URL-decodes (so `My%20Photo.jpg` matches the on-disk `My Photo.jpg` — the original bug that motivated this design), and normalizes leading `./` and trailing slashes. Sources scanned: live `document`, `serialize({ local: true })` of the current page, every other inventory page parsed via `DOMParser` (DOM walk + text scan), and `gitqi-pages.json` (text scan).
+`enumerateLocalAssets()` recursively walks `dirHandle.getDirectoryHandle('assets')` → `Map<path, FileSystemFileHandle>`. `enumerateRemoteAssets()` walks `github.listDirectory('assets')` → `Map<path, sha>` (empty when `!hasGitHub`).
 
-  False-negatives break the live site; false-positives just put an extra checkbox in the review modal. The scanner errs heavily toward false-positives.
-- `enumerateLocalAssets()` — recursive walk of `dirHandle.getDirectoryHandle('assets')`. Returns `Map<assetPath, FileSystemFileHandle>`, paths relative to `assets/`.
-- `enumerateRemoteAssets()` — recursive walk via `github.listDirectory('assets')`. Returns `Map<assetPath, sha>`. Empty map when `!hasGitHub`.
-- `promptAssetCleanup()` — runs all three in parallel, computes orphans = union(local, remote) minus refs. Modal lists each orphan with a checkbox (default checked), filename, size, image thumbnail when applicable, and a "local + github" / "local" / "github" badge. Confirm runs `runAssetCleanup(selected)` which deletes locally via `dirHandle.removeEntry` (walking nested directories) and remotely via `github.deleteFile` (DELETE `/contents/{path}` requires the file's sha — we already have it from enumeration). Per-file failures don't abandon the rest; surfaced in a final status message.
-
-The new `github.deleteFile(path, sha)` and `github.listDirectory(path)` helpers live alongside `putFile` / `uploadFile`. 404 from either is treated as a no-op so cleanup stays idempotent across partial failures.
+`promptAssetCleanup()` computes orphans = union(local, remote) minus refs, then renders a modal with per-file checkboxes (default checked), size, thumbnail for images, and a local/github source badge. Confirm runs `runAssetCleanup(selected)` which deletes via `dirHandle.removeEntry` (recursive) and `github.deleteFile` (DELETE requires the sha we already have). Per-file failures don't abandon the rest. The `github.deleteFile(path, sha)` and `github.listDirectory(path)` helpers treat 404 as a no-op, so cleanup is idempotent across partial failures.
 
 ### 18. Google Fonts
 

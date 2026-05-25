@@ -452,69 +452,12 @@
 
   async function loadHandleFromDB() {
     const db = await openHandleDB();
-    // Try the current key first
-    const handle = await new Promise((resolve, reject) => {
+    return new Promise((resolve, reject) => {
       const tx = db.transaction('handles', 'readonly');
       const req = tx.objectStore('handles').get(HANDLE_KEY);
       req.onsuccess = () => resolve(req.result || null);
       req.onerror = () => reject(req.error);
     });
-    if (handle) return handle;
-
-    // Migration: v1.0.x stored the handle under the page pathname, not the site directory.
-    // Try that old key format and re-store under the new key if found.
-    const oldKey = 'dir:' + location.pathname;
-    if (oldKey !== HANDLE_KEY) {
-      const legacyHandle = await new Promise(resolve => {
-        try {
-          const tx = db.transaction('handles', 'readonly');
-          const req = tx.objectStore('handles').get(oldKey);
-          req.onsuccess = () => resolve(req.result || null);
-          req.onerror = () => resolve(null);
-        } catch (_) { resolve(null); }
-      });
-      if (legacyHandle) {
-        await storeHandleInDB(legacyHandle);
-        return legacyHandle;
-      }
-    }
-
-    // Legacy Webby migration: v1.2.x and earlier used the IndexedDB database
-    // name "__webby_fs". If the new "__gitqi_fs" database is empty, copy the
-    // handle over from the legacy DB and delete the legacy DB so future loads
-    // are clean. Runs only when the new DB has no handle — idempotent after
-    // the first successful migration.
-    const migratedHandle = await new Promise(resolve => {
-      try {
-        const legacyReq = indexedDB.open('__webby_fs', 1);
-        legacyReq.onupgradeneeded = e => {
-          // Legacy DB didn't exist — abort (newly created empty DB will be
-          // cleaned up in onsuccess).
-          e.target.result.createObjectStore('handles');
-        };
-        legacyReq.onsuccess = e => {
-          const legacyDb = e.target.result;
-          let done = false;
-          const finish = val => { if (!done) { done = true; legacyDb.close(); resolve(val); } };
-          try {
-            const tx = legacyDb.transaction('handles', 'readonly');
-            const req = tx.objectStore('handles').get(HANDLE_KEY);
-            req.onsuccess = () => finish(req.result || null);
-            req.onerror = () => finish(null);
-          } catch (_) { finish(null); }
-        };
-        legacyReq.onerror = () => resolve(null);
-      } catch (_) { resolve(null); }
-    });
-    if (migratedHandle) {
-      await storeHandleInDB(migratedHandle);
-      try { indexedDB.deleteDatabase('__webby_fs'); } catch (_) {}
-      return migratedHandle;
-    }
-    // No legacy handle found — still delete the empty legacy DB we may have
-    // just created by opening it.
-    try { indexedDB.deleteDatabase('__webby_fs'); } catch (_) {}
-    return null;
   }
 
   async function verifyPermission(handle) {
@@ -524,7 +467,6 @@
     return false;
   }
 
-  // Called at init — silently restores folder access or shows the access banner
   // Called at init — silently restores folder access or shows the link banner
   async function initFileAccess() {
     try {
@@ -646,26 +588,8 @@
         pagesInventory.pages.push({ file: CURRENT_FILENAME, title: document.title || CURRENT_FILENAME, navLabel: document.title || CURRENT_FILENAME });
         await savePagesInventory();
       }
-      return;
     } catch (_) {
-      // fall through to legacy migration / seed
-    }
-
-    // Legacy Webby migration: if webby-pages.json exists but gitqi-pages.json
-    // doesn't, read the old file, write it as gitqi-pages.json, then delete
-    // the old one. Idempotent — only runs when gitqi-pages.json is absent.
-    try {
-      const legacyFh = await dirHandle.getFileHandle('webby-pages.json');
-      const legacyFile = await legacyFh.getFile();
-      pagesInventory = JSON.parse(await legacyFile.text());
-      if (!pagesInventory.pages.find(p => p.file === CURRENT_FILENAME)) {
-        pagesInventory.pages.push({ file: CURRENT_FILENAME, title: document.title || CURRENT_FILENAME, navLabel: document.title || CURRENT_FILENAME });
-      }
-      await savePagesInventory();
-      try { await dirHandle.removeEntry('webby-pages.json'); } catch (_) {}
-      return;
-    } catch (_) {
-      // No legacy file either — seed from the current page and write it
+      // No inventory on disk — seed from the current page and write it
       pagesInventory = { pages: [{ file: CURRENT_FILENAME, title: document.title || CURRENT_FILENAME, navLabel: document.title || CURRENT_FILENAME }] };
       await savePagesInventory();
     }
@@ -843,7 +767,6 @@
         const pageFile = await fh.getFile();
         const text = await pageFile.text();
         const doc = new DOMParser().parseFromString(text, 'text/html');
-        migrateLegacyWebbyMarkersInDoc(doc);
 
         // Replace <nav> — re-target the "current page" active marker so each
         // destination page marks its own link, not the link of the source page.
@@ -1035,14 +958,6 @@
 
   function isFooterSection(section) {
     return section === getFooterElement();
-  }
-
-  function deactivateZones() {
-    document.querySelectorAll('[data-editable]').forEach(node => {
-      node.removeAttribute('contenteditable');
-      node.removeAttribute('spellcheck');
-    });
-    document.querySelectorAll('[data-editor-ui]').forEach(el => el.remove());
   }
 
   // ─── Empty editable remove control ────────────────────────────────────────
@@ -3151,7 +3066,7 @@ RULES:
           <li>Click any image to replace it from your computer</li>
           <li>Click any video to paste a new YouTube URL</li>
           <li>Hover a section for <strong>Duplicate · Reformat · Delete · Move ↑ ↓</strong></li>
-          <li>Hover a nav link for <strong>↑ ↓ ✕</strong>; click <strong>+</strong> at the end of a group to add a link</li>
+          <li>Hover a nav link for <strong>← →</strong> reorder; click <strong>+</strong> at the end of a group to add a link. Remove a link via its popover.</li>
           <li>Click <strong>⟲</strong> to push nav + footer + theme to every other page</li>
           <li>Use the <strong>Pages</strong> panel to open, duplicate, or delete pages</li>
           <li>Use the <strong>Theme</strong> panel to change colors, fonts, spacing, and favicon</li>
@@ -5254,12 +5169,10 @@ RULES:
     clone.removeAttribute('style');
 
     // For publish/export only: strip secrets.js and gitqi.js so they never go live.
-    // Also strips the legacy webby.js filename so a page that hasn't been
-    // migrated in memory still publishes clean.
     if (!local) {
       clone.querySelectorAll('script').forEach(s => {
         const src = s.getAttribute('src') || '';
-        if (src.includes('secrets.js') || src.includes('gitqi.js') || src.includes('webby.js')) s.remove();
+        if (src.includes('secrets.js') || src.includes('gitqi.js')) s.remove();
       });
       // The data-gitqi-style marker is a runtime license to "unilaterally fix"
       // inline-styled spans during editing. Deployed HTML doesn't need it; the
@@ -5304,7 +5217,7 @@ RULES:
     const url = URL.createObjectURL(blob);
     const a = el('a');
     a.href = url;
-    a.download = 'index.html';
+    a.download = CURRENT_FILENAME;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     setDirty(false);
@@ -5445,10 +5358,9 @@ RULES:
             const pageFile = await fh.getFile();
             const text     = await pageFile.text();
             const doc      = new DOMParser().parseFromString(text, 'text/html');
-            migrateLegacyWebbyMarkersInDoc(doc);
             doc.querySelectorAll('script').forEach(s => {
               const src = s.getAttribute('src') || '';
-              if (src.includes('secrets.js') || src.includes('gitqi.js') || src.includes('webby.js')) s.remove();
+              if (src.includes('secrets.js') || src.includes('gitqi.js')) s.remove();
             });
             doc.querySelectorAll(`span[${GITQI_STYLE_ATTR}]`).forEach(s => s.removeAttribute(GITQI_STYLE_ATTR));
             obfuscateMailtoLinks(doc);
@@ -8664,92 +8576,6 @@ RULES:
     css(popover, { top: top + 'px', left: left + 'px' });
   }
 
-  // ─── Legacy Webby → GitQi migration ───────────────────────────────────────
-  //
-  // v1.2.x and earlier shipped as "Webby" and used the data-webby-*, __webby-*,
-  // and webby-pages.json namespaces. On first load with GitQi we detect those
-  // markers and rewrite them in place. The migration is silent and idempotent —
-  // after the first auto-save writes the updated HTML, subsequent loads find
-  // nothing to migrate and this is a no-op.
-  //
-  // In-DOM migration runs synchronously before activateZones() so the rest of
-  // the editor only ever sees the new namespace. On-disk migration (pages
-  // inventory file, script src in saved HTML) happens inside the code paths
-  // that touch those things.
-
-  function migrateLegacyWebbyMarkers() {
-    let migrated = false;
-
-    // 1. Rename data-webby-* attributes to data-gitqi-*.
-    const attrMap = {
-      'data-webby-src':       'data-gitqi-src',
-      'data-webby-style':     'data-gitqi-style',
-      'data-webby-bound':     'data-gitqi-bound',
-      'data-webby-nav-bound': 'data-gitqi-nav-bound',
-    };
-    for (const [oldAttr, newAttr] of Object.entries(attrMap)) {
-      document.querySelectorAll('[' + oldAttr + ']').forEach(node => {
-        node.setAttribute(newAttr, node.getAttribute(oldAttr));
-        node.removeAttribute(oldAttr);
-        migrated = true;
-      });
-    }
-
-    // 2. Rename __webby-nav-styles and __webby-section-*-styles <style> ids.
-    const legacyNavStyle = document.getElementById('__webby-nav-styles');
-    if (legacyNavStyle) {
-      legacyNavStyle.id = '__gitqi-nav-styles';
-      migrated = true;
-    }
-    document.querySelectorAll('style[id^="__webby-section-"]').forEach(s => {
-      s.id = s.id.replace('__webby-section-', '__gitqi-section-');
-      migrated = true;
-    });
-
-    // 3. Rewrite <script src=".../webby.js"> (or pinned webby-*.js) to gitqi.js
-    //    so the saved HTML loads GitQi on its next open. The publish serializer
-    //    strips any script whose src matches webby.js or gitqi.js regardless,
-    //    so this is purely for the local edit-mode HTML.
-    document.querySelectorAll('script[src]').forEach(s => {
-      const src = s.getAttribute('src') || '';
-      if (/(^|\/)webby(-[0-9][^/]*)?\.js(\?|#|$)/.test(src)) {
-        s.setAttribute('src', src.replace(/webby(-[0-9][^/]*)?\.js/, 'gitqi.js'));
-        migrated = true;
-      }
-    });
-
-    if (migrated) setDirty(true);
-  }
-
-  // Same migration, applied to a parsed HTMLDocument read from disk. Used by
-  // the shared-head sync and publish paths so legacy pages get rewritten on
-  // any cross-page write, without requiring the user to open each page.
-  function migrateLegacyWebbyMarkersInDoc(doc) {
-    const attrMap = {
-      'data-webby-src':       'data-gitqi-src',
-      'data-webby-style':     'data-gitqi-style',
-      'data-webby-bound':     'data-gitqi-bound',
-      'data-webby-nav-bound': 'data-gitqi-nav-bound',
-    };
-    for (const [oldAttr, newAttr] of Object.entries(attrMap)) {
-      doc.querySelectorAll('[' + oldAttr + ']').forEach(node => {
-        node.setAttribute(newAttr, node.getAttribute(oldAttr));
-        node.removeAttribute(oldAttr);
-      });
-    }
-    const legacyNav = doc.getElementById('__webby-nav-styles');
-    if (legacyNav) legacyNav.id = '__gitqi-nav-styles';
-    doc.querySelectorAll('style[id^="__webby-section-"]').forEach(s => {
-      s.id = s.id.replace('__webby-section-', '__gitqi-section-');
-    });
-    doc.querySelectorAll('script[src]').forEach(s => {
-      const src = s.getAttribute('src') || '';
-      if (/(^|\/)webby(-[0-9][^/]*)?\.js(\?|#|$)/.test(src)) {
-        s.setAttribute('src', src.replace(/webby(-[0-9][^/]*)?\.js/, 'gitqi.js'));
-      }
-    });
-  }
-
   // ─── Init ─────────────────────────────────────────────────────────────────
 
   async function init() {
@@ -8760,7 +8586,6 @@ RULES:
     // source of truth going forward.
     document.documentElement.removeAttribute('style');
     injectToolbar();
-    migrateLegacyWebbyMarkers();
     activateZones();
     activateNav();
     bindMutationObserver();
